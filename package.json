@@ -11,6 +11,7 @@
     "worker:scan": "tsx watch src/jobs/scanWorker.ts",
     "db:migrate": "tsx db/run-migrations.ts",
     "admin:promote": "tsx db/promote-admin.ts",
+    "storage:setup": "tsx db/setup-storage.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand"
   },
   "repository": {
