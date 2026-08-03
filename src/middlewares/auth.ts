@@ -48,7 +48,7 @@ export async function authenticateToken(
 
   const { data: profile, error } = await supabaseAdmin
     .from("profiles")
-    .select("id, organization_id, role")
+    .select("id, organization_id, role, is_platform_admin")
     .eq("id", verified.userId)
     .single();
 
@@ -62,6 +62,7 @@ export async function authenticateToken(
     organizationId: profile.organization_id,
     role: profile.role as UserRole,
     accessToken: verified.token,
+    isPlatformAdmin: profile.is_platform_admin,
   };
 
   next();
@@ -102,4 +103,25 @@ export function requireRole(allowedRoles: UserRole[]) {
 
     next();
   };
+}
+
+/**
+ * Gatea las rutas /api/v1/admin/*. Debe usarse siempre después de
+ * authenticateToken. No hay forma de auto-otorgarse esto vía API — ver
+ * db/promote-admin.ts.
+ */
+export function requirePlatformAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.profile) {
+    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "No autenticado" } });
+    return;
+  }
+
+  if (!req.profile.isPlatformAdmin) {
+    res.status(403).json({
+      error: { code: "FORBIDDEN", message: "Requiere permisos de administrador de plataforma" },
+    });
+    return;
+  }
+
+  next();
 }

@@ -31,22 +31,41 @@ async function main() {
   });
 
   await client.connect();
-  console.log(`Conectado a la base. Voy a ejecutar ${files.length} archivo(s) en orden:`);
-  files.forEach((f) => console.log(`  - ${f.replace(__dirname, "db")}`));
 
-  for (const file of files) {
+  // Lleva registro de qué archivos ya se aplicaron, para que el script sea
+  // seguro de re-correr: cada vez que se agrega una migración nueva, solo
+  // se ejecuta esa (schema.sql y las migraciones en sí no son idempotentes).
+  await client.query(`
+    create table if not exists _migrations_applied (
+      filename text primary key,
+      applied_at timestamptz not null default now()
+    );
+  `);
+  const { rows } = await client.query<{ filename: string }>("select filename from _migrations_applied");
+  const alreadyApplied = new Set(rows.map((r) => r.filename));
+
+  const pending = files.filter((f) => !alreadyApplied.has(f.replace(__dirname, "db")));
+
+  if (pending.length === 0) {
+    console.log("Nada para aplicar — ya está todo al día.");
+    await client.end();
+    return;
+  }
+
+  console.log(`Conectado a la base. Voy a ejecutar ${pending.length} archivo(s) pendiente(s):`);
+  pending.forEach((f) => console.log(`  - ${f.replace(__dirname, "db")}`));
+
+  for (const file of pending) {
+    const label = file.replace(__dirname, "db");
     const sql = readFileSync(file, "utf8");
-    process.stdout.write(`\n>>> ${file.replace(__dirname, "db")} ... `);
+    process.stdout.write(`\n>>> ${label} ... `);
     try {
       await client.query(sql);
+      await client.query("insert into _migrations_applied (filename) values ($1)", [label]);
       console.log("OK");
     } catch (err) {
       console.log("FALLÓ");
       console.error(err instanceof Error ? err.message : err);
-      console.error(
-        "\nSi el error es 'relation already exists' o similar, es porque este script ya se corrió antes " +
-          "(schema.sql y las migraciones no son idempotentes: están pensadas para correr una sola vez)."
-      );
       await client.end();
       process.exit(1);
     }

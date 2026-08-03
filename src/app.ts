@@ -12,6 +12,7 @@ import { findingsRouter } from "./routes/findings.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { onboardingRouter } from "./routes/onboarding.js";
 import { frameworksRouter } from "./routes/frameworks.js";
+import { adminRouter } from "./routes/admin.js";
 
 export function createApp(): Express {
   const app = express();
@@ -33,6 +34,7 @@ export function createApp(): Express {
   app.use("/api/v1", dashboardRouter);
   app.use("/api/v1", onboardingRouter);
   app.use("/api/v1", frameworksRouter);
+  app.use("/api/v1", adminRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -5,6 +5,8 @@ export interface AuthenticatedProfile {
   organizationId: string;
   role: UserRole;
   accessToken: string;
+  /** Superadmin de plataforma (ve/administra todas las organizaciones). No es parte del RBAC por-org. */
+  isPlatformAdmin: boolean;
 }
 
 declare global {
