@@ -27,6 +27,7 @@
     "bullmq": "^6.0.6",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.1",
     "file-type": "^22.0.1",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
+    "@types/exceljs": "^0.5.3",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",

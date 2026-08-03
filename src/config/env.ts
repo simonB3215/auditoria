@@ -11,6 +11,10 @@ const envSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().min(1),
   REDIS_URL: z.string().min(1),
   EVIDENCE_BUCKET: z.string().default("evidences"),
+  // Clave AES-256 (32 bytes) en hex, para cifrar evidencias antes de subirlas a Storage.
+  EVIDENCE_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, "Debe ser una clave hexadecimal de 64 caracteres (32 bytes)"),
 });
 
 const parsed = envSchema.safeParse(process.env);
