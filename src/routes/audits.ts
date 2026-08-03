@@ -22,10 +22,9 @@ const updateAuditSchema = z
     message: "Debés incluir al menos un campo a actualizar (title y/o framework)",
   });
 
-auditsRouter.use(authenticateToken);
-
 auditsRouter.post(
   "/audits",
+  authenticateToken,
   requireRole(["ciso", "auditor"]),
   asyncHandler(async (req, res) => {
     const body = createAuditSchema.parse(req.body);
@@ -53,6 +52,7 @@ auditsRouter.post(
 
 auditsRouter.get(
   "/audits",
+  authenticateToken,
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
@@ -72,6 +72,7 @@ auditsRouter.get(
 
 auditsRouter.get(
   "/audits/:id",
+  authenticateToken,
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
@@ -96,6 +97,7 @@ auditsRouter.get(
 
 auditsRouter.patch(
   "/audits/:id",
+  authenticateToken,
   requireRole(["ciso", "auditor"]),
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {

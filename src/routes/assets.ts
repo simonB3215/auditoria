@@ -9,10 +9,9 @@ import { validateUuidParams } from "../middlewares/validateParams.js";
 
 export const assetsRouter = Router();
 
-assetsRouter.use(authenticateToken);
-
 assetsRouter.post(
   "/assets",
+  authenticateToken,
   requireRole(["ciso", "auditor"]),
   asyncHandler(async (req, res) => {
     const body = assetInputSchema.parse(req.body);
@@ -44,6 +43,7 @@ assetsRouter.post(
 
 assetsRouter.get(
   "/assets",
+  authenticateToken,
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
@@ -63,6 +63,7 @@ assetsRouter.get(
 
 assetsRouter.get(
   "/assets/:id",
+  authenticateToken,
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
@@ -102,6 +103,7 @@ assetsRouter.get(
  */
 assetsRouter.post(
   "/assets/:id/verify",
+  authenticateToken,
   requireRole(["ciso", "auditor"]),
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
