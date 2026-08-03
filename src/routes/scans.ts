@@ -6,6 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
 import { scanQueue, type ScanTargetAsset } from "../jobs/scanQueue.js";
+import { validateUuidParams } from "../middlewares/validateParams.js";
 
 export const scansRouter = Router();
 
@@ -17,6 +18,7 @@ scansRouter.post(
   "/audits/:auditId/run-scan",
   authenticateToken,
   requireRole(["ciso", "auditor"]),
+  validateUuidParams("auditId"),
   sensitiveActionRateLimiter,
   asyncHandler(async (req, res) => {
     const profile = req.profile!;

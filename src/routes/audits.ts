@@ -4,6 +4,7 @@ import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
+import { validateUuidParams } from "../middlewares/validateParams.js";
 
 export const auditsRouter = Router();
 
@@ -62,6 +63,7 @@ auditsRouter.get(
 
 auditsRouter.get(
   "/audits/:id",
+  validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);

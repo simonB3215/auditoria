@@ -7,6 +7,7 @@ import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
+import { validateUuidParams } from "../middlewares/validateParams.js";
 import { detectFileKind, validateSemanticContent } from "../services/fileValidation.js";
 import { uploadEncryptedEvidence } from "../services/evidenceStorage.js";
 import { evaluateCoverage } from "../services/coverageEngine.js";
@@ -27,6 +28,7 @@ evidencesRouter.post(
   "/audits/:auditId/evidences",
   authenticateToken,
   requireRole(["ciso", "auditor"]),
+  validateUuidParams("auditId"),
   sensitiveActionRateLimiter,
   upload.single("file"),
   asyncHandler(async (req, res) => {

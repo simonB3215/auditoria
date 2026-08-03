@@ -5,6 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
 import { assetInputSchema } from "../validators/assetValidators.js";
+import { validateUuidParams } from "../middlewares/validateParams.js";
 
 export const assetsRouter = Router();
 
@@ -75,6 +76,7 @@ assetsRouter.get(
 assetsRouter.post(
   "/assets/:id/verify",
   requireRole(["ciso", "auditor"]),
+  validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
