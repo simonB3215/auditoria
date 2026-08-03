@@ -6,18 +6,16 @@ import { useRouter } from "next/navigation";
 import { LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
+import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const ROLE_LABEL: Record<string, string> = {
-  ciso: "CISO",
-  auditor: "Auditor",
-  viewer: "Viewer",
-};
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { profile, loading, errorCode } = useProfile();
+  const { dict } = useI18n();
+  const t = dict.nav;
 
   useEffect(() => {
     if (errorCode === "PROFILE_NOT_FOUND") {
@@ -38,7 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
           <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
             <ShieldCheck className="size-5 text-primary" aria-hidden />
-            Aegis CyberAudit
+            {dict.common.appName}
           </Link>
 
           <nav className="flex items-center gap-4">
@@ -47,18 +45,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
             >
               <LayoutDashboard className="size-4" aria-hidden />
-              Dashboard
+              {t.dashboard}
             </Link>
 
             {loading ? (
               <Skeleton className="h-5 w-24" />
             ) : profile ? (
-              <span className="text-sm text-muted-foreground">{ROLE_LABEL[profile.role] ?? profile.role}</span>
+              <span className="text-sm text-muted-foreground">{t.roles[profile.role]}</span>
             ) : null}
+
+            <LanguageSwitcher />
 
             <Button variant="ghost" size="sm" onClick={handleLogout}>
               <LogOut className="size-4" aria-hidden />
-              Salir
+              {t.logout}
             </Button>
           </nav>
         </div>

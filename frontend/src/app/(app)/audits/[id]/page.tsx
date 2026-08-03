@@ -5,6 +5,7 @@ import Link from "next/link";
 import { FileText } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Audit, ComplianceRequirement, EvidenceListResponse, EvidenceUploadResponse } from "@/lib/types";
+import { useI18n } from "@/lib/i18n/context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,6 +16,8 @@ import { EvidenceUpload } from "@/components/evidence-upload";
 
 export default function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = usePromise(params);
+  const { dict } = useI18n();
+  const t = dict.auditDetail;
 
   const [audit, setAudit] = useState<Audit | null>(null);
   const [requirements, setRequirements] = useState<ComplianceRequirement[]>([]);
@@ -37,7 +40,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
         setRequirements(reqRes.data.data);
         setCoverage(evidencesRes.data.data);
       })
-      .catch((err) => setError(getApiErrorMessage(err, "No se pudo cargar la auditoría")))
+      .catch((err) => setError(getApiErrorMessage(err, t.loadFailed)))
       .finally(() => setLoading(false));
   }
 
@@ -67,7 +70,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
   if (error || !audit) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>{error ?? "Auditoría no encontrada"}</AlertDescription>
+        <AlertDescription>{error ?? t.notFound}</AlertDescription>
       </Alert>
     );
   }
@@ -84,7 +87,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
           <Button asChild variant="outline" size="sm">
             <Link href={`/audits/${id}/report`}>
               <FileText className="size-4" aria-hidden />
-              Ver reporte
+              {t.viewReport}
             </Link>
           </Button>
         </div>
@@ -93,7 +96,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Matriz de cobertura</CardTitle>
+            <CardTitle className="text-base">{t.coverageMatrix}</CardTitle>
           </CardHeader>
           <CardContent>
             {coverage && (
@@ -108,7 +111,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Cargar evidencia</CardTitle>
+            <CardTitle className="text-base">{t.uploadEvidence}</CardTitle>
           </CardHeader>
           <CardContent>
             <EvidenceUpload auditId={id} requirements={requirements} onUploaded={handleUploaded} />
@@ -118,7 +121,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Evidencias cargadas</CardTitle>
+          <CardTitle className="text-base">{t.uploadedEvidences}</CardTitle>
         </CardHeader>
         <CardContent>
           {coverage && coverage.evidences.length > 0 ? (
@@ -128,7 +131,9 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="flex flex-col">
                     <span className="font-medium">{ev.file_name}</span>
                     {ev.requirement_code && (
-                      <span className="text-xs text-muted-foreground">Requisito {ev.requirement_code}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {t.requirementPrefix} {ev.requirement_code}
+                      </span>
                     )}
                   </div>
                   <span
@@ -138,13 +143,13 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
                         : "text-[var(--severity-critical)]"
                     }
                   >
-                    {ev.validation_status === "valid" ? "Válida" : "Con errores"}
+                    {ev.validation_status === "valid" ? t.valid : t.withErrors}
                   </span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">Todavía no se cargó ninguna evidencia.</p>
+            <p className="text-sm text-muted-foreground">{t.noEvidences}</p>
           )}
         </CardContent>
       </Card>

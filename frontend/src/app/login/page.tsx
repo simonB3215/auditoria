@@ -5,15 +5,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { GoogleSignInButton } from "@/components/google-signin-button";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { dict } = useI18n();
+  const t = dict.auth.login;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -21,8 +25,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get("error") === "oauth_failed") {
-      setError("No se pudo completar el inicio de sesión con Google. Probá de nuevo.");
+      setError(t.oauthFailed);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -36,7 +41,7 @@ export default function LoginPage() {
     setLoading(false);
 
     if (signInError) {
-      setError(signInError.message === "Invalid login credentials" ? "Email o contraseña incorrectos" : signInError.message);
+      setError(signInError.message === "Invalid login credentials" ? t.wrongCredentials : signInError.message);
       return;
     }
 
@@ -46,16 +51,19 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+      <div className="absolute right-4 top-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
           <ShieldCheck className="mb-2 size-8 text-primary" aria-hidden />
-          <CardTitle>Aegis CyberAudit</CardTitle>
-          <CardDescription>Iniciá sesión para continuar</CardDescription>
+          <CardTitle>{dict.common.appName}</CardTitle>
+          <CardDescription>{t.subtitle}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t.email}</Label>
               <Input
                 id="email"
                 type="email"
@@ -66,7 +74,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="password">Contraseña</Label>
+              <Label htmlFor="password">{t.password}</Label>
               <Input
                 id="password"
                 type="password"
@@ -84,22 +92,22 @@ export default function LoginPage() {
             )}
 
             <Button type="submit" disabled={loading} className="w-full">
-              {loading ? "Ingresando..." : "Ingresar"}
+              {loading ? t.submitting : t.submit}
             </Button>
           </form>
 
           <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
             <div className="h-px flex-1 bg-border" />
-            O
+            {dict.common.or}
             <div className="h-px flex-1 bg-border" />
           </div>
 
           <GoogleSignInButton />
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            ¿No tenés cuenta?{" "}
+            {t.noAccount}{" "}
             <Link href="/register" className="font-medium text-primary underline-offset-4 hover:underline">
-              Registrá tu organización
+              {t.registerLink}
             </Link>
           </p>
         </CardContent>

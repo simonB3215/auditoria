@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { FolderKanban, ListChecks, Plus, ShieldAlert } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { DashboardSummary } from "@/lib/types";
+import { useI18n } from "@/lib/i18n/context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -33,15 +34,10 @@ function StatCard({ icon: Icon, label, value }: { icon: typeof FolderKanban; lab
   );
 }
 
-const FRAMEWORKS: { value: Framework; label: string }[] = [
-  { value: "iso27001", label: "ISO 27001" },
-  { value: "nist_csf", label: "NIST CSF" },
-  { value: "gdpr", label: "GDPR" },
-  { value: "local_dp_law", label: "Normativa local de datos" },
-];
-
 export default function DashboardPage() {
   const router = useRouter();
+  const { dict } = useI18n();
+  const t = dict.dashboard;
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,17 +47,25 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  const FRAMEWORKS: { value: Framework; label: string }[] = [
+    { value: "iso27001", label: t.frameworks.iso27001 },
+    { value: "nist_csf", label: t.frameworks.nist_csf },
+    { value: "gdpr", label: t.frameworks.gdpr },
+    { value: "local_dp_law", label: t.frameworks.local_dp_law },
+  ];
+
   function loadSummary() {
     setLoading(true);
     api
       .get<{ data: DashboardSummary }>("/api/v1/dashboard/summary")
       .then((res) => setSummary(res.data.data))
-      .catch((err) => setError(getApiErrorMessage(err, "No se pudo cargar el dashboard")))
+      .catch((err) => setError(getApiErrorMessage(err, t.loadFailed)))
       .finally(() => setLoading(false));
   }
 
   useEffect(() => {
     loadSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleCreateAudit(e: React.FormEvent) {
@@ -75,7 +79,7 @@ export default function DashboardPage() {
       });
       router.push(`/audits/${res.data.data.id}`);
     } catch (err) {
-      setCreateError(getApiErrorMessage(err, "No se pudo crear la auditoría"));
+      setCreateError(getApiErrorMessage(err, t.createAuditFailed));
     } finally {
       setCreating(false);
     }
@@ -94,7 +98,7 @@ export default function DashboardPage() {
   if (error || !summary) {
     return (
       <Alert variant="destructive">
-        <AlertDescription>{error ?? "No se pudo cargar el dashboard"}</AlertDescription>
+        <AlertDescription>{error ?? t.loadFailed}</AlertDescription>
       </Alert>
     );
   }
@@ -102,15 +106,15 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard icon={FolderKanban} label="Activos auditados" value={summary.totalAssets} />
-        <StatCard icon={ListChecks} label="Cumplimiento global" value={`${summary.averageCoveragePercentage}%`} />
-        <StatCard icon={ShieldAlert} label="Auditorías totales" value={summary.totalAudits} />
+        <StatCard icon={FolderKanban} label={t.statAssets} value={summary.totalAssets} />
+        <StatCard icon={ListChecks} label={t.statCoverage} value={`${summary.averageCoveragePercentage}%`} />
+        <StatCard icon={ShieldAlert} label={t.statAudits} value={summary.totalAudits} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Distribución de riesgos</CardTitle>
+            <CardTitle className="text-base">{t.riskDistribution}</CardTitle>
           </CardHeader>
           <CardContent>
             <SeverityDistribution counts={summary.findingsBySeverity} />
@@ -119,22 +123,22 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Nueva auditoría</CardTitle>
+            <CardTitle className="text-base">{t.newAudit}</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreateAudit} className="flex flex-col gap-3">
               <div className="flex flex-col gap-2">
-                <Label htmlFor="title">Título</Label>
+                <Label htmlFor="title">{t.title}</Label>
                 <Input
                   id="title"
                   required
                   value={newAuditTitle}
                   onChange={(e) => setNewAuditTitle(e.target.value)}
-                  placeholder="Auditoría Q1 2026"
+                  placeholder={t.titlePlaceholder}
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="framework">Framework</Label>
+                <Label htmlFor="framework">{t.framework}</Label>
                 <select
                   id="framework"
                   className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
@@ -157,7 +161,7 @@ export default function DashboardPage() {
 
               <Button type="submit" disabled={creating}>
                 <Plus className="size-4" aria-hidden />
-                {creating ? "Creando..." : "Crear auditoría"}
+                {creating ? t.creating : t.createAudit}
               </Button>
             </form>
           </CardContent>
@@ -166,11 +170,11 @@ export default function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Auditorías recientes</CardTitle>
+          <CardTitle className="text-base">{t.recentAudits}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-1">
           {summary.recentAudits.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Todavía no creaste ninguna auditoría.</p>
+            <p className="text-sm text-muted-foreground">{t.noAudits}</p>
           ) : (
             summary.recentAudits.map((audit) => (
               <Link

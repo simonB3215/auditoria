@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 
 function GoogleIcon() {
@@ -25,6 +26,8 @@ function GoogleIcon() {
 }
 
 export function GoogleSignInButton() {
+  const { dict } = useI18n();
+  const t = dict.auth.google;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,7 +54,7 @@ export function GoogleSignInButton() {
     <div className="flex flex-col gap-2">
       <Button type="button" variant="outline" className="w-full" disabled={loading} onClick={handleClick}>
         <GoogleIcon />
-        {loading ? "Redirigiendo..." : "Continuar con Google"}
+        {loading ? t.redirecting : t.continue}
       </Button>
       {error && <p className="text-center text-sm text-destructive">{error}</p>}
     </div>

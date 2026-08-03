@@ -6,15 +6,19 @@ import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { api, getApiErrorMessage } from "@/lib/api";
+import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { GoogleSignInButton } from "@/components/google-signin-button";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { dict } = useI18n();
+  const t = dict.auth.register;
   const [organizationName, setOrganizationName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,7 +53,7 @@ export default function RegisterPage() {
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
-      setError(getApiErrorMessage(err, "No se pudo crear la organización"));
+      setError(getApiErrorMessage(err, t.createOrgFailed));
     } finally {
       setLoading(false);
     }
@@ -58,18 +62,20 @@ export default function RegisterPage() {
   if (needsEmailConfirmation) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+        <div className="absolute right-4 top-4">
+          <LanguageSwitcher />
+        </div>
         <Card className="w-full max-w-sm">
           <CardHeader className="items-center text-center">
             <ShieldCheck className="mb-2 size-8 text-primary" aria-hidden />
-            <CardTitle>Confirmá tu email</CardTitle>
+            <CardTitle>{t.confirmEmailTitle}</CardTitle>
             <CardDescription>
-              Te enviamos un link de confirmación a <span className="font-medium">{email}</span>. Una vez
-              confirmado, iniciá sesión para terminar de crear tu organización.
+              {t.confirmEmailDescBefore} <span className="font-medium">{email}</span>. {t.confirmEmailDescAfter}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button asChild className="w-full">
-              <Link href="/login">Ir a iniciar sesión</Link>
+              <Link href="/login">{t.goToLogin}</Link>
             </Button>
           </CardContent>
         </Card>
@@ -79,16 +85,19 @@ export default function RegisterPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+      <div className="absolute right-4 top-4">
+        <LanguageSwitcher />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
           <ShieldCheck className="mb-2 size-8 text-primary" aria-hidden />
-          <CardTitle>Registrá tu organización</CardTitle>
-          <CardDescription>Creá la cuenta principal (rol CISO)</CardDescription>
+          <CardTitle>{t.title}</CardTitle>
+          <CardDescription>{t.subtitle}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="organizationName">Nombre de la organización</Label>
+              <Label htmlFor="organizationName">{t.organizationName}</Label>
               <Input
                 id="organizationName"
                 required
@@ -97,11 +106,11 @@ export default function RegisterPage() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="fullName">Tu nombre</Label>
+              <Label htmlFor="fullName">{t.fullName}</Label>
               <Input id="fullName" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t.email}</Label>
               <Input
                 id="email"
                 type="email"
@@ -112,7 +121,7 @@ export default function RegisterPage() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="password">Contraseña</Label>
+              <Label htmlFor="password">{t.password}</Label>
               <Input
                 id="password"
                 type="password"
@@ -131,25 +140,23 @@ export default function RegisterPage() {
             )}
 
             <Button type="submit" disabled={loading} className="w-full">
-              {loading ? "Creando cuenta..." : "Crear cuenta"}
+              {loading ? t.submitting : t.submit}
             </Button>
           </form>
 
           <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
             <div className="h-px flex-1 bg-border" />
-            O
+            {dict.common.or}
             <div className="h-px flex-1 bg-border" />
           </div>
 
           <GoogleSignInButton />
-          <p className="mt-2 text-center text-xs text-muted-foreground">
-            Con Google te vamos a pedir el nombre de la organización en el paso siguiente.
-          </p>
+          <p className="mt-2 text-center text-xs text-muted-foreground">{t.googleHint}</p>
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            ¿Ya tenés cuenta?{" "}
+            {t.hasAccount}{" "}
             <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
-              Iniciar sesión
+              {t.loginLink}
             </Link>
           </p>
         </CardContent>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, use as usePromise } from "react";
 import { Download, Loader2 } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { AuditReport, Finding, FindingSeverity, EvidenceListResponse } from "@/lib/types";
+import { useI18n } from "@/lib/i18n/context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,16 +13,18 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/severity-badge";
 
-const SEVERITY_TABS: { value: FindingSeverity | "all"; label: string }[] = [
-  { value: "all", label: "Todas" },
-  { value: "critical", label: "Críticas" },
-  { value: "high", label: "Altas" },
-  { value: "medium", label: "Medias" },
-  { value: "low", label: "Bajas" },
-];
-
 export default function AuditReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = usePromise(params);
+  const { dict } = useI18n();
+  const t = dict.report;
+
+  const SEVERITY_TABS: { value: FindingSeverity | "all"; label: string }[] = [
+    { value: "all", label: t.severityAll },
+    { value: "critical", label: t.severityCritical },
+    { value: "high", label: t.severityHigh },
+    { value: "medium", label: t.severityMedium },
+    { value: "low", label: t.severityLow },
+  ];
 
   const [findings, setFindings] = useState<Finding[]>([]);
   const [missingRequirements, setMissingRequirements] = useState<Array<{ code: string; title: string }>>([]);
@@ -45,8 +48,9 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
         setFindings(findingsRes.data.data);
         setMissingRequirements(evidencesRes.data.data.missing_requirements);
       })
-      .catch((err) => setError(getApiErrorMessage(err, "No se pudo cargar el reporte")))
+      .catch((err) => setError(getApiErrorMessage(err, t.loadFailed)))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const filteredFindings = useMemo(
@@ -62,7 +66,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
       setReport(res.data.data);
       window.open(res.data.data.signedUrl, "_blank", "noopener,noreferrer");
     } catch (err) {
-      setReportError(getApiErrorMessage(err, "No se pudo generar el reporte"));
+      setReportError(getApiErrorMessage(err, t.generateFailed));
     } finally {
       setGenerating(false);
     }
@@ -88,17 +92,17 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Reporte ejecutivo</h1>
+        <h1 className="text-xl font-semibold">{t.title}</h1>
         <div className="flex items-center gap-3">
           {report && (
             <span className="text-sm text-muted-foreground">
-              Score: <span className="font-medium text-foreground">{report.riskScore.score}/100</span> (
+              {t.score}: <span className="font-medium text-foreground">{report.riskScore.score}/100</span> (
               {report.riskScore.complianceLevel})
             </span>
           )}
           <Button onClick={handleGenerateReport} disabled={generating}>
             {generating ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
-            {generating ? "Generando..." : "Descargar Reporte PDF"}
+            {generating ? t.generating : t.downloadPdf}
           </Button>
         </div>
       </div>
@@ -111,11 +115,11 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Requisitos faltantes / documentación pendiente</CardTitle>
+          <CardTitle className="text-base">{t.missingRequirements}</CardTitle>
         </CardHeader>
         <CardContent>
           {missingRequirements.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No hay requisitos pendientes de evidencia.</p>
+            <p className="text-sm text-muted-foreground">{t.noMissingRequirements}</p>
           ) : (
             <ul className="flex flex-col gap-1 text-sm">
               {missingRequirements.map((req) => (
@@ -130,7 +134,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Hallazgos</CardTitle>
+          <CardTitle className="text-base">{t.findings}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <Tabs value={severityFilter} onValueChange={(v) => setSeverityFilter(v as FindingSeverity | "all")}>
@@ -144,14 +148,14 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           </Tabs>
 
           {filteredFindings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No hay hallazgos para este filtro.</p>
+            <p className="text-sm text-muted-foreground">{t.noFindingsForFilter}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Severidad</TableHead>
-                  <TableHead>Hallazgo</TableHead>
-                  <TableHead>Remediación</TableHead>
+                  <TableHead>{t.colSeverity}</TableHead>
+                  <TableHead>{t.colFinding}</TableHead>
+                  <TableHead>{t.colRemediation}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

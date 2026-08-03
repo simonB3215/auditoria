@@ -5,6 +5,7 @@ import { useDropzone } from "react-dropzone";
 import { UploadCloud, CheckCircle2, XCircle } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { ComplianceRequirement, EvidenceUploadResponse } from "@/lib/types";
+import { useI18n } from "@/lib/i18n/context";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,8 @@ interface EvidenceUploadProps {
 }
 
 export function EvidenceUpload({ auditId, requirements, onUploaded }: EvidenceUploadProps) {
+  const { dict } = useI18n();
+  const t = dict.auditDetail;
   const [requirementCode, setRequirementCode] = useState(requirements[0]?.code ?? "");
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback] = useState<
@@ -43,18 +46,18 @@ export function EvidenceUpload({ auditId, requirements, onUploaded }: EvidenceUp
         const result = res.data.data;
 
         if (result.validation_errors.length > 0) {
-          setFeedback({ kind: "error", message: "El archivo se guardó pero tiene errores", details: result.validation_errors });
+          setFeedback({ kind: "error", message: t.evidenceErrorTitle, details: result.validation_errors });
         } else {
           setFeedback({ kind: "success" });
         }
         onUploaded(result);
       } catch (err) {
-        setFeedback({ kind: "error", message: getApiErrorMessage(err, "No se pudo subir el archivo") });
+        setFeedback({ kind: "error", message: getApiErrorMessage(err, t.uploadFailed) });
       } finally {
         setUploading(false);
       }
     },
-    [auditId, requirementCode, onUploaded]
+    [auditId, requirementCode, onUploaded, t.evidenceErrorTitle, t.uploadFailed]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -72,7 +75,7 @@ export function EvidenceUpload({ auditId, requirements, onUploaded }: EvidenceUp
     <div className="flex flex-col gap-3">
       {requirements.length > 0 && (
         <div className="flex flex-col gap-2">
-          <Label htmlFor="requirement">Requisito que cubre esta evidencia</Label>
+          <Label htmlFor="requirement">{t.requirementLabel}</Label>
           <select
             id="requirement"
             className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
@@ -99,16 +102,16 @@ export function EvidenceUpload({ auditId, requirements, onUploaded }: EvidenceUp
         <input {...getInputProps()} />
         <UploadCloud className="size-8 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium">
-          {uploading ? "Subiendo..." : isDragActive ? "Soltá el archivo acá" : "Arrastrá un archivo o hacé clic"}
+          {uploading ? t.dropzoneUploading : isDragActive ? t.dropzoneActive : t.dropzoneIdle}
         </p>
-        <p className="text-xs text-muted-foreground">.xlsx, .pdf o .json — máx. 20MB</p>
+        <p className="text-xs text-muted-foreground">{t.dropzoneHint}</p>
       </div>
 
       {feedback?.kind === "success" && (
         <Alert>
           <CheckCircle2 className="size-4" />
-          <AlertTitle>Evidencia válida</AlertTitle>
-          <AlertDescription>La cobertura se actualizó.</AlertDescription>
+          <AlertTitle>{t.evidenceValidTitle}</AlertTitle>
+          <AlertDescription>{t.evidenceValidDesc}</AlertDescription>
         </Alert>
       )}
 
