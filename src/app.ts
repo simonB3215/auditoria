@@ -5,6 +5,8 @@ import { healthRouter } from "./routes/health.js";
 import { usersRouter } from "./routes/users.js";
 import { auditsRouter } from "./routes/audits.js";
 import { evidencesRouter } from "./routes/evidences.js";
+import { assetsRouter } from "./routes/assets.js";
+import { scansRouter } from "./routes/scans.js";
 
 export function createApp(): Express {
   const app = express();
@@ -19,6 +21,8 @@ export function createApp(): Express {
   app.use("/api/v1", usersRouter);
   app.use("/api/v1", auditsRouter);
   app.use("/api/v1", evidencesRouter);
+  app.use("/api/v1", assetsRouter);
+  app.use("/api/v1", scansRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
