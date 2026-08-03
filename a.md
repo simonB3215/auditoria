@@ -1,53 +1,76 @@
-# ROL Y OBJETIVO
-Actúa como un Arquitecto de Software Senior y Especialista en Ciberseguridad. Tu objetivo es diseñar la arquitectura técnica, la estructura de base de datos y la hoja de ruta de desarrollo para un Producto Mínimo Viable (MVP) de una plataforma de auditoría de ciberseguridad automatizada.
+# PLAN DE IMPLEMENTACIÓN Y EJECUCIÓN TÉCNICA (MVP)
+
+> **Instrucciones para la IA ejecutora:** Actúa como un Desarrollador Fullstack Senior y Especialista en Ciberseguridad. Tu objetivo es implementar el MVP de la plataforma de auditoría de ciberseguridad siguiendo estrictamente la arquitectura, el modelo de datos y las 4 fases detalladas a continuación. Cada módulo debe incluir manejo de errores, seguridad en los inputs y código modular en TypeScript/Node.js y Supabase.
 
 ---
 
-# CONTEXTO DEL PROYECTO
-- Nombre del Proyecto: [Ej: Aegis CyberAudit / Sistema de Auditoría]
-- Propósito del MVP: [Ej: Automatizar la evaluación de cumplimiento normativo y detección de vulnerabilidades básicas para Pymes/empresas].
-- Público Objetivo: [Ej: CISOs, Auditores IT, administradores de sistemas].
+## 🚀 FASE 1: Cimientos, Base de Datos y Autenticación (Sprint 1)
+
+### Objetivo
+Configurar el entorno base, desplegar el esquema de base de datos PostgreSQL con Row Level Security (RLS) en Supabase y establecer el sistema de autenticación JWT con control de acceso basado en roles (RBAC).
+
+### Tareas de Implementación
+1. **Setup Inicial del Proyecto:**
+   * Crear la estructura de carpetas en Node.js / Express con TypeScript (`/src`: `config`, `controllers`, `services`, `middlewares`, `routes`, `types`).
+   * Configurar `Helmet`, `CORS` restringido y `express-rate-limit`.
+   * Inicializar el cliente oficial de Supabase mediante `@supabase/supabase-js`.
+2. **Despliegue del Esquema de BD y RLS:**
+   * Ejecutar el script SQL para crear las tablas: `profiles`, `assets`, `audits`, `audit_assets`, `audit_evidences`, `findings` y `reports`.
+   * Habilitar RLS en todas las tablas y definir políticas donde `created_by = auth.uid()`.
+3. **Middlewares de Seguridad:**
+   * Crear `authenticateToken`: valida el JWT de Supabase extraído de los encabezados `Authorization: Bearer <token>`.
+   * Crear `requireRole(['ciso', 'auditor'])`: valida los permisos del perfil almacenado en `profiles`.
 
 ---
 
-# DOCUMENTACIÓN Y ESPECIFICACIONES TÉCNICAS
+## 📂 FASE 2: Ingesta de Evidencias, Validación y Matriz de Cobertura (Sprint 2 - Parte 1)
 
-1. Stack Tecnológico:
-   - Frontend: [Ej: React, Next.js, TailwindCSS]
-   - Backend: [Ej: Node.js (Express), Python (FastAPI)]
-   - Base de Datos: [Ej: Supabase / PostgreSQL]
-   - Motor de Escaneo / Integraciones: [Ej: Scripts propios, Zap/Nmap wrapper, APIs de terceros]
+### Objetivo
+Construir la API para la carga de evidencias y el **motor de validación** que detecte automáticamente si falta documentación o si los archivos subidos contienen errores.
 
-2. Módulos Clave del MVP:
-   - Módulo 1: Autenticación y Gestión de Usuarios (RBAC).
-   - Módulo 2: Ingesta de datos / Configuración de activos a auditar (IPs, dominios, repositorios).
-   - Módulo 3: Motor de Reglas / Checklists de Cumplimiento [Ej: ISO 27001, NIST, GDPR].
-   - Módulo 4: Generación de Reportes (PDF/Dashboard interactivo) con ponderación de riesgos (Severidad: Crítica, Alta, Media, Baja).
-
-3. Requerimientos Normativos y de Cumplimiento:
-   - [Incluir normativas a soportar: ISO 27001, NIST CSF, Leyes locales de protección de datos, etc.]
-
-4. Restricciones del MVP:
-   - Priorizar simplicidad, seguridad en el almacenamiento de hallazgos y tiempo rápido de despliegue.
+### Tareas de Implementación
+1. **Carga Segura de Archivos:**
+   * Endpoint `POST /api/v1/audits/:id/evidences` utilizando `Multer` en memoria (sin escribir en disco).
+2. **Capa 1: Validación Estructural (Sintaxis):**
+   * Inspección de encabezados *Magic Bytes* (usando paquetes como `file-type`) para asegurar que el formato interno coincida con extensiones permitidas (`.pdf`, `.json`, `.xlsx`). Rechazar binarios no identificados o ejecutables.
+3. **Capa 2: Validación Semántica y Cobertura:**
+   * Crear el servicio `CoverageEngine` que compare las evidencias cargadas contra la lista de requisitos mínimos de la norma (ej: ISO 27001).
+   * Validar que los archivos parseables (Excel/JSON) contengan los campos o columnas obligatorias (ej: IP, Criticidad, Responsable).
+4. **Almacenamiento y Notificación:**
+   * Subir archivos validados al Bucket privado de Supabase Storage con encriptación.
+   * Retornar un objeto JSON con el cálculo de cobertura (`completion_percentage`), errores detectados y lista de requisitos pendientes (`missing_requirements`).
 
 ---
 
-# ENTREGABLES REQUERIDOS
+## ⚡ FASE 3: Motor de Escaneo y Gestión de Hallazgos (Sprint 2 - Parte 2)
 
-Con base en la información proporcionada arriba y los documentos adjuntos, genera lo siguiente de manera detallada:
+### Objetivo
+Integrar la ejecución de análisis de infraestructura y el registro de vulnerabilidades/hallazgos asociados a los activos de la organización.
 
-1. Arquitectura de Sistema:
-   - Diagrama estructurado en texto (o formato Mermaid) del flujo de datos entre Frontend, Backend, DB y Motor de Auditoría.
-2. Modelo de Datos (Data Schema):
-   - Estructura de tablas e índices clave (SQL o esquema Supabase/PostgreSQL) incluyendo usuarios, activos, evaluaciones, hallazgos y reportes.
-3. Especificación de APIs / Endpoints REST:
-   - Lista de endpoints principales con sus métodos HTTP, rutas y payloads requeridos para el MVP.
-4. Plan de Implementación Sprint por Sprint:
-   - Desglose de tareas técnicas prioritarias en 3 a 4 sprints de desarrollo para tener el MVP funcional.
+### Tareas de Implementación
+1. **Gestión de Activos (CRUD):**
+   * Endpoints `POST /api/v1/assets` y `GET /api/v1/assets` con validación de sintaxis para direcciones IP, rangos CIDR y dominios.
+2. **Motor de Escaneo Asíncrono:**
+   * Endpoint `POST /api/v1/audits/:id/run-scan` que delegue las tareas de red/puertos a una cola de ejecución en segundo plano (usando BullMQ / Redis o procesos Worker).
+3. **Normalización de Hallazgos:**
+   * Transformar los resultados del escaneo (puertos abiertos, cifrados débiles, faltas de parches) e insertarlos en la tabla `findings` asignando la severidad correspondiente (`critical`, `high`, `medium`, `low`).
 
 ---
 
-# INSTRUCCIONES DE FORMATO
-- Usa código claro, estructurado y modular.
-- Mantén un enfoque pragmático centrado en entregar valor rápido sin sobreingeniería.
-- Si detectas vacíos de seguridad o cuellos de botella en la documentación proporcionada, señálalos explícitamente y propone la solución recomendada.
+## 📊 FASE 4: Consolidación de Riesgos y Generación de Reportes (Sprint 3)
+
+### Objetivo
+Calcular la puntuación global de riesgo de la organización y generar un reporte ejecutivo descargable en formato PDF.
+
+### Tareas de Implementación
+1. **Algoritmo de Scoring (Ponderación de Riesgo):**
+   * Implementar la función de cálculo de riesgo combinando el déficit de documentación con los hallazgos técnicos:
+     $$\text{Puntaje} = 100 - (\sum \text{Hallazgos por Severidad} + \text{Penalización por Cobertura Incompleta})$$
+2. **Generación de Reportes:**
+   * Endpoint `GET /api/v1/audits/:id/report`.
+   * Integración de una librería PDF (`pdfkit` o `puppeteer`) para renderizar un documento estructurado que incluya:
+     * Resumen Ejecutivo (Score de Riesgo y Nivel de Cumplimiento).
+     * Tabla de Evidencias Faltantes e Incoherencias Detectadas.
+     * Desglose de Hallazgos y Sugerencias de Remediación.
+3. **Hardening Final pre-despliegue:**
+   * Revisión de variables de entorno, sanitización estricta de entradas en todas las rutas y pruebas E2E del flujo completo.
