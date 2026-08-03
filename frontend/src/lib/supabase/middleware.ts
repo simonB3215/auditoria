@@ -1,7 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/register"];
+// /auth/callback todavía no tiene sesión cuando el middleware corre (es
+// justo la ruta que la crea, intercambiando el `code` de Google) — tiene
+// que poder pasar sin que se la redirija a /login.
+const PUBLIC_PATHS = ["/login", "/register", "/auth"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

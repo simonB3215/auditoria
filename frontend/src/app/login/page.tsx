@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { GoogleSignInButton } from "@/components/google-signin-button";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,6 +18,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("error") === "oauth_failed") {
+      setError("No se pudo completar el inicio de sesión con Google. Probá de nuevo.");
+    }
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -80,6 +87,14 @@ export default function LoginPage() {
               {loading ? "Ingresando..." : "Ingresar"}
             </Button>
           </form>
+
+          <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />
+            O
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <GoogleSignInButton />
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             ¿No tenés cuenta?{" "}

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { GoogleSignInButton } from "@/components/google-signin-button";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -133,6 +134,17 @@ export default function RegisterPage() {
               {loading ? "Creando cuenta..." : "Crear cuenta"}
             </Button>
           </form>
+
+          <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />
+            O
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <GoogleSignInButton />
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            Con Google te vamos a pedir el nombre de la organización en el paso siguiente.
+          </p>
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             ¿Ya tenés cuenta?{" "}
