@@ -61,6 +61,33 @@ assetsRouter.get(
   })
 );
 
+assetsRouter.get(
+  "/assets/:id",
+  validateUuidParams("id"),
+  asyncHandler(async (req, res) => {
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+
+    const { data, error } = await supabase
+      .from("assets")
+      .select("id, type, value, verification_status, verified_at, created_at")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (error) {
+      throw new AppError(400, "ASSET_FETCH_FAILED", error.message);
+    }
+    // RLS hace que un activo de otra organización simplemente no aparezca
+    // en el resultado: se responde 404 tanto si no existe como si es ajeno,
+    // sin filtrar esa distinción entre tenants.
+    if (!data) {
+      throw new AppError(404, "ASSET_NOT_FOUND", "Activo no encontrado");
+    }
+
+    res.status(200).json({ data });
+  })
+);
+
 /**
  * Verificación de propiedad. Requisito previo para poder incluir el activo
  * en un escaneo activo (ver POST /audits/:id/run-scan).

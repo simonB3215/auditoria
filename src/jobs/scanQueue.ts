@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { redisConnection } from "../config/redis.js";
+import { redisConnectionForQueue } from "../config/redis.js";
 
 export const SCAN_QUEUE_NAME = "scan-jobs";
 
@@ -16,7 +16,7 @@ export interface ScanJobData {
 }
 
 export const scanQueue = new Queue<ScanJobData>(SCAN_QUEUE_NAME, {
-  connection: redisConnection,
+  connection: redisConnectionForQueue,
   defaultJobOptions: {
     attempts: 1, // un escaneo fallido no se reintenta automáticamente: requiere revisión (ver audits.status = 'failed')
     removeOnComplete: 100,

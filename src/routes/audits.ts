@@ -13,6 +13,15 @@ const createAuditSchema = z.object({
   framework: z.enum(["iso27001", "nist_csf", "gdpr", "local_dp_law"]),
 });
 
+const updateAuditSchema = z
+  .object({
+    title: z.string().trim().min(3).max(200).optional(),
+    framework: z.enum(["iso27001", "nist_csf", "gdpr", "local_dp_law"]).optional(),
+  })
+  .refine((body) => Object.keys(body).length > 0, {
+    message: "Debés incluir al menos un campo a actualizar (title y/o framework)",
+  });
+
 auditsRouter.use(authenticateToken);
 
 auditsRouter.post(
@@ -79,6 +88,36 @@ auditsRouter.get(
     }
     if (!data) {
       throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
+    }
+
+    res.status(200).json({ data });
+  })
+);
+
+auditsRouter.patch(
+  "/audits/:id",
+  requireRole(["ciso", "auditor"]),
+  validateUuidParams("id"),
+  asyncHandler(async (req, res) => {
+    const body = updateAuditSchema.parse(req.body);
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+
+    const { data, error } = await supabase
+      .from("audits")
+      .update(body)
+      .eq("id", req.params.id)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      throw new AppError(400, "AUDIT_UPDATE_FAILED", error.message);
+    }
+    // Cubre tres casos con la misma respuesta (por diseño, RLS no distingue
+    // "no existe" de "pertenece a otra organización" ni de "sin permiso de
+    // escritura por rol/ownership dentro de la misma organización"):
+    if (!data) {
+      throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada o sin permiso de edición");
     }
 
     res.status(200).json({ data });

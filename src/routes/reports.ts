@@ -9,8 +9,9 @@ import { env } from "../config/env.js";
 import { evaluateCoverage } from "../services/coverageEngine.js";
 import { calculateRiskScore } from "../services/riskScoring.js";
 import { buildAuditReportPdf, type ReportFinding, type ReportEvidenceIssue } from "../services/pdfReport.js";
-import { encryptEvidence } from "../utils/evidenceCrypto.js";
 import type { FindingSeverity } from "../services/findingsNormalization.js";
+
+const SIGNED_URL_TTL_SECONDS = 5 * 60;
 
 export const reportsRouter = Router();
 
@@ -73,12 +74,15 @@ reportsRouter.get(
     });
 
     const reportId = randomUUID();
-    const storagePath = `${audit.organization_id}/${auditId}/${reportId}.pdf.enc`;
-    const { blob } = encryptEvidence(pdfBuffer);
+    // El bucket de reportes es privado y solo se accede vía signed URL de
+    // corta duración (ver abajo); a diferencia de las evidencias (documentos
+    // fuente sensibles y de vida larga), el reporte no se cifra a nivel de
+    // aplicación para poder servirlo directo desde Supabase Storage.
+    const storagePath = `${audit.organization_id}/${auditId}/${reportId}.pdf`;
 
     const { error: uploadError } = await supabaseAdmin.storage
       .from(env.REPORTS_BUCKET)
-      .upload(storagePath, blob, { contentType: "application/octet-stream", upsert: false });
+      .upload(storagePath, pdfBuffer, { contentType: "application/pdf", upsert: false });
     if (uploadError) {
       throw new AppError(500, "REPORT_UPLOAD_FAILED", uploadError.message);
     }
@@ -99,9 +103,27 @@ reportsRouter.get(
     // el creador de la auditoría o tenga rol 'ciso' (ver RLS de `audits`).
     await supabaseAdmin.from("audits").update({ risk_score: riskScore.score }).eq("id", auditId);
 
-    res.status(200);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="reporte-auditoria-${auditId}.pdf"`);
-    res.send(pdfBuffer);
+    const { data: signed, error: signedUrlError } = await supabaseAdmin.storage
+      .from(env.REPORTS_BUCKET)
+      .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+    if (signedUrlError || !signed) {
+      throw new AppError(500, "SIGNED_URL_FAILED", signedUrlError?.message ?? "No se pudo firmar el link de descarga");
+    }
+
+    res.status(200).json({
+      data: {
+        reportId,
+        auditId,
+        signedUrl: signed.signedUrl,
+        expiresInSeconds: SIGNED_URL_TTL_SECONDS,
+        riskScore: {
+          score: riskScore.score,
+          complianceLevel: riskScore.complianceLevel,
+          findingsPenalty: riskScore.findingsPenalty,
+          coveragePenalty: riskScore.coveragePenalty,
+        },
+        coverage,
+      },
+    });
   })
 );

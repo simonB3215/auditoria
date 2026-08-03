@@ -1,5 +1,5 @@
 import { Worker, type Job } from "bullmq";
-import { redisConnection } from "../config/redis.js";
+import { redisConnectionForWorker } from "../config/redis.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { SCAN_QUEUE_NAME, type ScanJobData } from "./scanQueue.js";
 import { runNmapScan } from "./scanEngine.js";
@@ -48,7 +48,7 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
 }
 
 export const scanWorker = new Worker<ScanJobData>(SCAN_QUEUE_NAME, processScanJob, {
-  connection: redisConnection,
+  connection: redisConnectionForWorker,
   concurrency: 4,
 });
 
