@@ -11,6 +11,8 @@ declare global {
   namespace Express {
     interface Request {
       profile?: AuthenticatedProfile;
+      /** Solo seteado por authenticateTokenOnly (flujo de onboarding, antes de que exista `profiles`). */
+      userId?: string;
     }
   }
 }

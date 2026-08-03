@@ -1,0 +1,153 @@
+"use client";
+
+import { useEffect, useState, use as usePromise } from "react";
+import Link from "next/link";
+import { FileText } from "lucide-react";
+import { api, getApiErrorMessage } from "@/lib/api";
+import type { Audit, ComplianceRequirement, EvidenceListResponse, EvidenceUploadResponse } from "@/lib/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { AuditStatusBadge } from "@/components/audit-status-badge";
+import { CoverageMatrix } from "@/components/coverage-matrix";
+import { EvidenceUpload } from "@/components/evidence-upload";
+
+export default function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = usePromise(params);
+
+  const [audit, setAudit] = useState<Audit | null>(null);
+  const [requirements, setRequirements] = useState<ComplianceRequirement[]>([]);
+  const [coverage, setCoverage] = useState<EvidenceListResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  function loadAll() {
+    setLoading(true);
+    setError(null);
+
+    api
+      .get<{ data: Audit }>(`/api/v1/audits/${id}`)
+      .then(async (auditRes) => {
+        setAudit(auditRes.data.data);
+        const [reqRes, evidencesRes] = await Promise.all([
+          api.get<{ data: ComplianceRequirement[] }>(`/api/v1/frameworks/${auditRes.data.data.framework}/requirements`),
+          api.get<{ data: EvidenceListResponse }>(`/api/v1/audits/${id}/evidences`),
+        ]);
+        setRequirements(reqRes.data.data);
+        setCoverage(evidencesRes.data.data);
+      })
+      .catch((err) => setError(getApiErrorMessage(err, "No se pudo cargar la auditoría")))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  function handleUploaded(result: EvidenceUploadResponse) {
+    setCoverage((prev) => ({
+      evidences: [result.evidence, ...(prev?.evidences ?? [])],
+      completion_percentage: result.completion_percentage,
+      missing_requirements: result.missing_requirements,
+      covered_requirements: result.covered_requirements,
+    }));
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-48" />
+      </div>
+    );
+  }
+
+  if (error || !audit) {
+    return (
+      <Alert variant="destructive">
+        <AlertDescription>{error ?? "Auditoría no encontrada"}</AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">{audit.title}</h1>
+          <p className="text-sm uppercase text-muted-foreground">{audit.framework}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <AuditStatusBadge status={audit.status} />
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/audits/${id}/report`}>
+              <FileText className="size-4" aria-hidden />
+              Ver reporte
+            </Link>
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Matriz de cobertura</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {coverage && (
+              <CoverageMatrix
+                requirements={requirements}
+                coveredCodes={coverage.covered_requirements}
+                completionPercentage={coverage.completion_percentage}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cargar evidencia</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <EvidenceUpload auditId={id} requirements={requirements} onUploaded={handleUploaded} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Evidencias cargadas</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {coverage && coverage.evidences.length > 0 ? (
+            <ul className="flex flex-col divide-y">
+              {coverage.evidences.map((ev) => (
+                <li key={ev.id} className="flex items-center justify-between py-2 text-sm">
+                  <div className="flex flex-col">
+                    <span className="font-medium">{ev.file_name}</span>
+                    {ev.requirement_code && (
+                      <span className="text-xs text-muted-foreground">Requisito {ev.requirement_code}</span>
+                    )}
+                  </div>
+                  <span
+                    className={
+                      ev.validation_status === "valid"
+                        ? "text-[var(--severity-low)]"
+                        : "text-[var(--severity-critical)]"
+                    }
+                  >
+                    {ev.validation_status === "valid" ? "Válida" : "Con errores"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Todavía no se cargó ninguna evidencia.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

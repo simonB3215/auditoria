@@ -8,6 +8,10 @@ import { evidencesRouter } from "./routes/evidences.js";
 import { assetsRouter } from "./routes/assets.js";
 import { scansRouter } from "./routes/scans.js";
 import { reportsRouter } from "./routes/reports.js";
+import { findingsRouter } from "./routes/findings.js";
+import { dashboardRouter } from "./routes/dashboard.js";
+import { onboardingRouter } from "./routes/onboarding.js";
+import { frameworksRouter } from "./routes/frameworks.js";
 
 export function createApp(): Express {
   const app = express();
@@ -25,6 +29,10 @@ export function createApp(): Express {
   app.use("/api/v1", assetsRouter);
   app.use("/api/v1", scansRouter);
   app.use("/api/v1", reportsRouter);
+  app.use("/api/v1", findingsRouter);
+  app.use("/api/v1", dashboardRouter);
+  app.use("/api/v1", onboardingRouter);
+  app.use("/api/v1", frameworksRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

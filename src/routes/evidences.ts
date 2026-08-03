@@ -15,6 +15,42 @@ import { findRequirement } from "../data/complianceRequirements.js";
 
 export const evidencesRouter = Router();
 
+/**
+ * Lista de evidencias cargadas + cobertura actual de la auditoría, sin
+ * necesidad de subir un archivo. El frontend la usa para pintar la matriz
+ * de cobertura al entrar a /audits/:id (POST de arriba solo devuelve esto
+ * como efecto secundario de un upload).
+ */
+evidencesRouter.get(
+  "/audits/:auditId/evidences",
+  authenticateToken,
+  validateUuidParams("auditId"),
+  asyncHandler(async (req, res) => {
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+    const auditId = String(req.params.auditId);
+
+    const { data: audit, error: auditError } = await supabase
+      .from("audits")
+      .select("id, framework")
+      .eq("id", auditId)
+      .maybeSingle();
+    if (auditError) throw new AppError(400, "AUDIT_FETCH_FAILED", auditError.message);
+    if (!audit) throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada o sin acceso");
+
+    const { data: evidences, error: evidencesError } = await supabase
+      .from("audit_evidences")
+      .select("id, file_name, requirement_code, validation_status, validation_errors, created_at")
+      .eq("audit_id", auditId)
+      .order("created_at", { ascending: false });
+    if (evidencesError) throw new AppError(400, "EVIDENCES_LIST_FAILED", evidencesError.message);
+
+    const coverage = await evaluateCoverage(supabase, auditId, audit.framework);
+
+    res.status(200).json({ data: { evidences: evidences ?? [], ...coverage } });
+  })
+);
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024, files: 1 },

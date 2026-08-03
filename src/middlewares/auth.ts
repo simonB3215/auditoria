@@ -11,6 +11,16 @@ interface SupabaseAccessTokenPayload {
   role?: string;
 }
 
+function verifySupabaseJwt(header: string | undefined): SupabaseAccessTokenPayload | null {
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  try {
+    return jwt.verify(token, env.SUPABASE_JWT_SECRET, { algorithms: ["HS256"] }) as SupabaseAccessTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Valida el JWT emitido por Supabase Auth y carga el perfil de aplicación
  * (organization_id, role) asociado a ese usuario. El token crudo se guarda
@@ -22,23 +32,12 @@ export async function authenticateToken(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación" } });
+  const payload = verifySupabaseJwt(req.headers.authorization);
+  if (!payload) {
+    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
     return;
   }
-
-  const token = header.slice("Bearer ".length).trim();
-
-  let payload: SupabaseAccessTokenPayload;
-  try {
-    payload = jwt.verify(token, env.SUPABASE_JWT_SECRET, {
-      algorithms: ["HS256"],
-    }) as SupabaseAccessTokenPayload;
-  } catch {
-    res.status(401).json({ error: { code: "INVALID_TOKEN", message: "Token inválido o expirado" } });
-    return;
-  }
+  const token = req.headers.authorization!.slice("Bearer ".length).trim();
 
   const { data: profile, error } = await supabaseAdmin
     .from("profiles")
@@ -58,6 +57,22 @@ export async function authenticateToken(
     accessToken: token,
   };
 
+  next();
+}
+
+/**
+ * Igual que authenticateToken pero SIN exigir que ya exista un `profiles`
+ * row: se usa exclusivamente en el endpoint de onboarding (creación de la
+ * organización + primer perfil), que es justamente el paso previo a que
+ * ese profile exista.
+ */
+export function authenticateTokenOnly(req: Request, res: Response, next: NextFunction): void {
+  const payload = verifySupabaseJwt(req.headers.authorization);
+  if (!payload) {
+    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
+    return;
+  }
+  req.userId = payload.sub;
   next();
 }
 
