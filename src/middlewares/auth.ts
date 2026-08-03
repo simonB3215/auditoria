@@ -1,28 +1,36 @@
 import type { NextFunction, Request, Response } from "express";
-import jwt from "jsonwebtoken";
-import { env } from "../config/env.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import type { UserRole } from "../types/express.d.ts";
 
-interface SupabaseAccessTokenPayload {
-  sub: string;
-  aud: string | string[];
-  exp: number;
-  role?: string;
-}
-
-function verifySupabaseJwt(header: string | undefined): SupabaseAccessTokenPayload | null {
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
-  try {
-    return jwt.verify(token, env.SUPABASE_JWT_SECRET, { algorithms: ["HS256"] }) as SupabaseAccessTokenPayload;
-  } catch {
-    return null;
-  }
+interface VerifiedToken {
+  userId: string;
+  token: string;
 }
 
 /**
- * Valida el JWT emitido por Supabase Auth y carga el perfil de aplicación
+ * Valida el access token contra la API de Supabase Auth (`auth.getUser`)
+ * en vez de verificarlo localmente con una JWT secret propia. Esto evita
+ * depender de encontrar/copiar un "JWT Secret" en un dashboard que Supabase
+ * viene reorganizando (Settings > API > Settings > API Keys, con claves
+ * legacy vs. publishable/secret en paralelo), y sigue funcionando sin
+ * cambios si el proyecto pasa de firma HS256 (legacy, secret compartido) a
+ * las claves asimétricas nuevas. El costo es un round-trip de red por
+ * request en vez de una verificación local; para el volumen de este MVP
+ * es una compensación aceptable a cambio de no romperse con cada cambio
+ * del esquema de claves de Supabase.
+ */
+async function verifySupabaseToken(header: string | undefined): Promise<VerifiedToken | null> {
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !data.user) return null;
+
+  return { userId: data.user.id, token };
+}
+
+/**
+ * Valida la sesión de Supabase y carga el perfil de aplicación
  * (organization_id, role) asociado a ese usuario. El token crudo se guarda
  * en req.profile.accessToken para reusarlo en clientes Supabase scoped-a-RLS
  * en las capas de servicio (ver supabaseForUser).
@@ -32,17 +40,16 @@ export async function authenticateToken(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const payload = verifySupabaseJwt(req.headers.authorization);
-  if (!payload) {
+  const verified = await verifySupabaseToken(req.headers.authorization);
+  if (!verified) {
     res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
     return;
   }
-  const token = req.headers.authorization!.slice("Bearer ".length).trim();
 
   const { data: profile, error } = await supabaseAdmin
     .from("profiles")
     .select("id, organization_id, role")
-    .eq("id", payload.sub)
+    .eq("id", verified.userId)
     .single();
 
   if (error || !profile) {
@@ -54,7 +61,7 @@ export async function authenticateToken(
     id: profile.id,
     organizationId: profile.organization_id,
     role: profile.role as UserRole,
-    accessToken: token,
+    accessToken: verified.token,
   };
 
   next();
@@ -66,13 +73,13 @@ export async function authenticateToken(
  * organización + primer perfil), que es justamente el paso previo a que
  * ese profile exista.
  */
-export function authenticateTokenOnly(req: Request, res: Response, next: NextFunction): void {
-  const payload = verifySupabaseJwt(req.headers.authorization);
-  if (!payload) {
+export async function authenticateTokenOnly(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const verified = await verifySupabaseToken(req.headers.authorization);
+  if (!verified) {
     res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
     return;
   }
-  req.userId = payload.sub;
+  req.userId = verified.userId;
   next();
 }
 

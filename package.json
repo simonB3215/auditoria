@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "worker:scan": "tsx watch src/jobs/scanWorker.ts",
+    "db:migrate": "tsx db/run-migrations.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand"
   },
   "repository": {
@@ -34,9 +35,9 @@
     "file-type": "^22.0.1",
     "helmet": "^8.3.0",
     "ioredis": "^6.0.0",
-    "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "pdfkit": "^0.19.1",
+    "pg": "^8.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -44,10 +45,10 @@
     "@types/exceljs": "^0.5.3",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^26.1.2",
     "@types/pdfkit": "^0.17.6",
+    "@types/pg": "^8.20.3",
     "@types/supertest": "^7.2.1",
     "jest": "^30.4.2",
     "supertest": "^7.2.2",

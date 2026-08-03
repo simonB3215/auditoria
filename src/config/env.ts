@@ -6,9 +6,10 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   CORS_ORIGIN: z.string().min(1),
   SUPABASE_URL: z.string().url(),
+  // Publishable key (sb_publishable_...) o, en proyectos viejos, la anon key legacy.
   SUPABASE_ANON_KEY: z.string().min(1),
+  // Secret key (sb_secret_...) o, en proyectos viejos, la service_role key legacy.
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  SUPABASE_JWT_SECRET: z.string().min(1),
   REDIS_URL: z.string().min(1),
   EVIDENCE_BUCKET: z.string().default("evidences"),
   REPORTS_BUCKET: z.string().default("reports"),
