@@ -52,6 +52,7 @@ export default function DashboardPage() {
     { value: "nist_csf", label: t.frameworks.nist_csf },
     { value: "gdpr", label: t.frameworks.gdpr },
     { value: "local_dp_law", label: t.frameworks.local_dp_law },
+    { value: "ley_21663_cl", label: t.frameworks.ley_21663_cl },
   ];
 
   function loadSummary() {
@@ -187,7 +188,7 @@ export default function DashboardPage() {
               >
                 <div className="flex flex-col gap-1">
                   <span className="font-medium">{audit.title}</span>
-                  <span className="text-xs uppercase text-muted-foreground">{audit.framework}</span>
+                  <span className="text-xs text-muted-foreground">{t.frameworks[audit.framework]}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   {audit.risk_score !== null && (

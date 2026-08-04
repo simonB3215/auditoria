@@ -19,10 +19,11 @@ export const AUDIT_ACTIONS = {
   USER_INVITED: "USER_INVITED",
   INVITATION_ACCEPTED: "INVITATION_ACCEPTED",
   GUEST_ROLE_EXPIRED: "GUEST_ROLE_EXPIRED",
+  SCAN_EXECUTED: "SCAN_EXECUTED",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
-export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization";
+export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan";
 
 interface LogAuditEventParams {
   organizationId: string;

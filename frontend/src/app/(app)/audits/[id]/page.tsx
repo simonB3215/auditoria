@@ -56,6 +56,20 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Estado del escaneo en tiempo real (a.md: "Pending/Scanning/Completed/Failed"):
+  // mientras el audit está en cola o corriendo, se refresca solo cada 3s en
+  // vez de depender de que el usuario recargue la página a mano.
+  useEffect(() => {
+    if (audit?.status !== "queued" && audit?.status !== "running") return;
+    const interval = setInterval(() => {
+      api
+        .get<{ data: Audit }>(`/api/v1/audits/${id}`)
+        .then((res) => setAudit(res.data.data))
+        .catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [id, audit?.status]);
+
   async function handleRunScan() {
     if (!canWrite) {
       setScanNotice({
@@ -103,6 +117,11 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
     );
   }
 
+  // Los requisitos "technical" (Ley 21.663) se satisfacen por escaneo, no
+  // por evidencia subida — no pertenecen a la matriz de cobertura
+  // documental ni al selector de carga (ver la tarjeta ANCI en el reporte).
+  const documentaryRequirements = requirements.filter((r) => r.kind !== "technical");
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -115,7 +134,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
           </Button>
           <div>
             <h1 className="text-xl font-semibold">{audit.title}</h1>
-            <p className="text-sm uppercase text-muted-foreground">{audit.framework}</p>
+            <p className="text-sm text-muted-foreground">{dict.dashboard.frameworks[audit.framework]}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -159,7 +178,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
           <CardContent>
             {coverage && (
               <CoverageMatrix
-                requirements={requirements}
+                requirements={documentaryRequirements}
                 coveredCodes={coverage.covered_requirements}
                 completionPercentage={coverage.completion_percentage}
               />
@@ -178,7 +197,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
                 <p className="text-sm text-muted-foreground">{dict.guestPilot.expiredMessage}</p>
               </div>
             ) : (
-              <EvidenceUpload auditId={id} requirements={requirements} onUploaded={handleUploaded} />
+              <EvidenceUpload auditId={id} requirements={documentaryRequirements} onUploaded={handleUploaded} />
             )}
           </CardContent>
         </Card>

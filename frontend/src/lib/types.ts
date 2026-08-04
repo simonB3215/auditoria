@@ -24,7 +24,7 @@ export interface InvitationPreview {
 }
 
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";
-export type Framework = "iso27001" | "nist_csf" | "gdpr" | "local_dp_law";
+export type Framework = "iso27001" | "nist_csf" | "gdpr" | "local_dp_law" | "ley_21663_cl";
 
 export interface Audit {
   id: string;
@@ -92,6 +92,24 @@ export interface ComplianceRequirement {
   title: string;
   expectedFileKind: EvidenceFileKind;
   requiredFields?: string[];
+  /** "technical" se satisface por escaneo, no espera evidencia subida — ver /audits/:id/anci-status. */
+  kind?: "documentary" | "technical";
+  /** Solo Ley 21.663: a qué nivel de obligación aplica (OIV hereda todo lo de SE). */
+  tier?: "SE" | "OIV";
+}
+
+export type TechnicalControlStatus = "ok" | "fail" | "not_scanned";
+
+export interface TechnicalControlResult {
+  code: string;
+  title: string;
+  status: TechnicalControlStatus;
+}
+
+export interface AnciStatus {
+  sePercentage: number;
+  oivPercentage: number;
+  technicalControls: TechnicalControlResult[];
 }
 
 export interface EvidenceListResponse {

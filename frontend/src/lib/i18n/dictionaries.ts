@@ -106,6 +106,7 @@ export const dictionaries = {
         nist_csf: "NIST CSF",
         gdpr: "GDPR",
         local_dp_law: "Normativa local de datos",
+        ley_21663_cl: "Ley N° 21.663 (Chile - ANCI)",
       },
     },
     auditDetail: {
@@ -169,6 +170,17 @@ export const dictionaries = {
       cancel: "Cancelar",
       statusUpdateFailed: "No se pudo actualizar el estado del hallazgo",
       reviewedBy: "Revisado por",
+    },
+    anci: {
+      title: "Cumplimiento Ley N° 21.663 (ANCI)",
+      seLabel: "Servicios Esenciales (SE)",
+      oivLabel: "Operadores de Importancia Vital (OIV)",
+      oivHint: "OIV incluye todos los requisitos de SE más los suyos propios — por eso su % nunca es mayor.",
+      technicalControls: "Controles técnicos verificados por escaneo",
+      statusOk: "Cumple",
+      statusFail: "No cumple",
+      statusNotScanned: "Sin escanear",
+      loadFailed: "No se pudo cargar el estado de cumplimiento ANCI",
     },
     severity: {
       critical: "Crítica",
@@ -521,6 +533,7 @@ export const dictionaries = {
         nist_csf: "NIST CSF",
         gdpr: "GDPR",
         local_dp_law: "Local data protection law",
+        ley_21663_cl: "Law N° 21,663 (Chile - ANCI)",
       },
     },
     auditDetail: {
@@ -584,6 +597,17 @@ export const dictionaries = {
       cancel: "Cancel",
       statusUpdateFailed: "Couldn't update the finding's status",
       reviewedBy: "Reviewed by",
+    },
+    anci: {
+      title: "Law N° 21,663 Compliance (ANCI)",
+      seLabel: "Essential Services (SE)",
+      oivLabel: "Vitally Important Operators (OIV)",
+      oivHint: "OIV includes every SE requirement plus its own — that's why its % is never higher.",
+      technicalControls: "Technical controls verified by scan",
+      statusOk: "Compliant",
+      statusFail: "Non-compliant",
+      statusNotScanned: "Not scanned",
+      loadFailed: "Couldn't load ANCI compliance status",
     },
     severity: {
       critical: "Critical",

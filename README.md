@@ -1,9 +1,10 @@
 # Aegis CyberAudit
 
 Plataforma de auditoría de ciberseguridad para pymes: gestión de activos,
-checklist de cumplimiento normativo (ISO 27001 / NIST CSF / GDPR / normativa
-local), ingesta y validación de evidencias, motor de escaneo asíncrono, y
-generación de reportes ejecutivos con scoring de riesgo.
+checklist de cumplimiento normativo (ISO 27001 / NIST CSF / GDPR / Ley N°
+21.663 de Chile — ANCI / normativa local), ingesta y validación de
+evidencias, motor de escaneo asíncrono, y generación de reportes ejecutivos
+con scoring de riesgo.
 
 Backend en `src/` (Node.js + Express + TypeScript), frontend en `frontend/`
 (Next.js). Base de datos y autenticación con Supabase (PostgreSQL + Auth +
@@ -224,6 +225,37 @@ URLs de Supabase.
   `POST /onboarding/accept-invitation` como demostración del punto de
   integración.
 
+### Ley N° 21.663 de Ciberseguridad (Chile — ANCI)
+- Framework seleccionable `ley_21663_cl` en `/audits/new` y en la edición de
+  auditorías. Sus requisitos (`src/data/complianceRequirements.ts`) se
+  dividen en dos ejes independientes:
+  - **`kind`**: `documentary` (requiere evidencia subida, como el resto de
+    los frameworks) o `technical` (se satisface automáticamente contra los
+    hallazgos del motor de escaneo — Nmap/TLS/cabeceras — sin esperar un
+    archivo; nunca aparece en la matriz de cobertura documental ni en el
+    selector de evidencia, para no pedir un archivo que nunca hace falta).
+  - **`tier`**: `SE` (Servicios Esenciales, el piso común) u `OIV`
+    (Operadores de Importancia Vital, que ACUMULA todo lo de SE más sus
+    requisitos exclusivos — nunca es un conjunto separado).
+- `GET /audits/:id/anci-status` (`src/services/anciCoverageEngine.ts`)
+  combina evidencia documental y hallazgos de escaneo en dos porcentajes —
+  cumplimiento SE y cumplimiento OIV — más el detalle de cada control
+  técnico (`ok` / `fail` / `not_scanned`). Se muestra como tarjeta propia
+  en `/audits/[id]/report` cuando el framework tiene controles con `tier`.
+- **Trazabilidad**: cada activo efectivamente escaneado genera un evento
+  `SCAN_EXECUTED` en `audit_logs` con el target, quién disparó el escaneo y
+  un hash SHA-256 de integridad de ese resultado puntual (`scanWorker.ts`).
+- El reporte PDF de una auditoría `ley_21663_cl` agrega una sección
+  "Informe de Posición de Riesgo — Ley 21.663 (ANCI)" con el % SE/OIV, el
+  detalle de controles técnicos, una bitácora de evidencias, y un hash
+  SHA-256 de verificación del documento — **no es una firma electrónica
+  avanzada ni calificada** en los términos de la Ley N° 19.799, se etiqueta
+  explícitamente como tal en el propio PDF para no sobre-prometer validez
+  legal que requeriría PKI/certificado calificado (fuera de alcance).
+- El botón "Ejecutar escaneo" de `/audits/[id]` refresca el estado del
+  audit cada 3s mientras está `queued`/`running`, sin necesidad de recargar
+  la página a mano, hasta reflejar `completed`/`failed`.
+
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
   evidencias, cambios de estado de hallazgos, generación/descarga de
@@ -272,6 +304,7 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | POST | `/audits/:id/run-scan` | Encolar un escaneo asíncrono |
 | GET | `/audits/:id/findings` | Hallazgos (filtrable por `?severity=`) |
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
+| GET | `/audits/:id/anci-status` | Cumplimiento Ley 21.663: `{ sePercentage, oivPercentage, technicalControls }` |
 | GET | `/dashboard/summary` | Métricas agregadas para el dashboard |
 | GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones + uso de storage |
 | PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva una organización |
@@ -303,8 +336,8 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | `/dashboard` | Métricas, distribución de riesgos, alta rápida de auditorías |
 | `/assets` | Gestión de activos: tabla con filtros, alta/edición, verificación, borrado |
 | `/audits/new` | Creación de auditoría con selección múltiple de activos |
-| `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) + disparo manual de escaneo |
-| `/audits/[id]/report` | Hallazgos filtrables por severidad, acciones de falso positivo/riesgo aceptado, descarga de PDF |
+| `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) + disparo manual de escaneo (estado en vivo cada 3s) |
+| `/audits/[id]/report` | Hallazgos filtrables por severidad, acciones de falso positivo/riesgo aceptado, tarjeta de cumplimiento ANCI (Ley 21.663), descarga de PDF |
 | `/settings/team` | *(platform admin)* Genera links de invitación (copiar/compartir), permanentes o Piloto Invitado (10 días) |
 | `/admin` | *(solo platform admin)* Métricas de plataforma, gestión de organizaciones, roles y actividad |
 | `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas |

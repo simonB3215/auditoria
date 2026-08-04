@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Worker, type Job } from "bullmq";
 import { redisConnectionForWorker } from "../config/redis.js";
 import { supabaseAdmin } from "../config/supabase.js";
@@ -9,11 +10,21 @@ import {
   normalizeHeaderFindings,
   type NormalizedFinding,
 } from "../services/findingsNormalization.js";
+import { logAuditEvent, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
 const NETWORK_SCANNABLE_TYPES = new Set(["ip", "domain", "cidr"]);
 
+/** Hash de integridad de los hallazgos de un activo — permite comprobar después que un resultado no fue alterado. */
+function hashFindings(findings: NormalizedFinding[]): string {
+  const canonical = findings
+    .map((f) => `${f.source_engine}|${f.title}|${f.severity}|${f.detail}`)
+    .sort()
+    .join("\n");
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
 async function processScanJob(job: Job<ScanJobData>): Promise<void> {
-  const { auditId, assets } = job.data;
+  const { organizationId, auditId, assets, actorId } = job.data;
   const startedAt = new Date();
 
   await supabaseAdmin.from("audits").update({ status: "running" }).eq("id", auditId);
@@ -37,25 +48,46 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
       failures.push(`${asset.assetValue}: ${result.detail}`);
       continue;
     }
-    allFindings.push(...normalizeOpenPorts(auditId, asset.assetId, asset.assetValue, result.openPorts));
+
+    const assetFindings: NormalizedFinding[] = [...normalizeOpenPorts(auditId, asset.assetId, asset.assetValue, result.openPorts)];
 
     // Chequeos de TLS/cabeceras solo tienen sentido contra un host puntual
     // (ip/domain), no contra un rango CIDR completo.
-    if (asset.assetType === "cidr") continue;
-
-    for (const p of result.openPorts) {
-      if (isHttpsPort(p.port)) {
-        const tlsFindings = await checkTlsCertificate(asset.assetValue, p.port);
-        allFindings.push(...normalizeTlsFindings(auditId, asset.assetId, asset.assetValue, p.port, tlsFindings));
-      }
-      if (isHttpLikePort(p.port)) {
-        const useHttps = isHttpsPort(p.port);
-        const headerFindings = await checkSecurityHeaders(asset.assetValue, p.port, useHttps);
-        allFindings.push(
-          ...normalizeHeaderFindings(auditId, asset.assetId, asset.assetValue, p.port, useHttps, headerFindings)
-        );
+    if (asset.assetType !== "cidr") {
+      for (const p of result.openPorts) {
+        if (isHttpsPort(p.port)) {
+          const tlsFindings = await checkTlsCertificate(asset.assetValue, p.port);
+          assetFindings.push(...normalizeTlsFindings(auditId, asset.assetId, asset.assetValue, p.port, tlsFindings));
+        }
+        if (isHttpLikePort(p.port)) {
+          const useHttps = isHttpsPort(p.port);
+          const headerFindings = await checkSecurityHeaders(asset.assetValue, p.port, useHttps);
+          assetFindings.push(
+            ...normalizeHeaderFindings(auditId, asset.assetId, asset.assetValue, p.port, useHttps, headerFindings)
+          );
+        }
       }
     }
+
+    allFindings.push(...assetFindings);
+
+    // Trazabilidad ANCI/ISO 27001 (a.md): un registro inmutable por cada
+    // activo efectivamente escaneado, con un hash de integridad del
+    // resultado — permite comprobar después que ese resultado no fue
+    // alterado, sin necesitar guardar los hallazgos crudos otra vez acá.
+    await logAuditEvent({
+      organizationId,
+      actorId,
+      action: AUDIT_ACTIONS.SCAN_EXECUTED,
+      resourceType: "scan",
+      resourceId: asset.assetId,
+      payloadAfter: {
+        target: asset.assetValue,
+        assetType: asset.assetType,
+        scanResultsHash: hashFindings(assetFindings),
+        findingsCount: assetFindings.length,
+      },
+    });
   }
 
   if (allFindings.length > 0) {

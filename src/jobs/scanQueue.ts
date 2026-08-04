@@ -13,6 +13,8 @@ export interface ScanJobData {
   organizationId: string;
   auditId: string;
   assets: ScanTargetAsset[];
+  /** Quién disparó el escaneo — se usa para atribuir el evento SCAN_EXECUTED en audit_logs. */
+  actorId: string;
 }
 
 export const scanQueue = new Queue<ScanJobData>(SCAN_QUEUE_NAME, {

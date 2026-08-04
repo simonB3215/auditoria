@@ -4,13 +4,15 @@ import { useEffect, useMemo, useState, use as usePromise } from "react";
 import Link from "next/link";
 import { ArrowLeft, Download, Loader2, MoreHorizontal, ShieldOff, CheckCircle2, RotateCcw } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
-import type { AuditReport, Finding, FindingSeverity, FindingStatus, EvidenceListResponse } from "@/lib/types";
+import type { AnciStatus, AuditReport, Finding, FindingSeverity, FindingStatus, EvidenceListResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
 import { useProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +49,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
 
   const [findings, setFindings] = useState<Finding[]>([]);
   const [missingRequirements, setMissingRequirements] = useState<Array<{ code: string; title: string }>>([]);
+  const [anci, setAnci] = useState<AnciStatus | null>(null);
   const [severityFilter, setSeverityFilter] = useState<FindingSeverity | "all">("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,10 +71,12 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
     Promise.all([
       api.get<{ data: Finding[] }>(`/api/v1/audits/${id}/findings`),
       api.get<{ data: EvidenceListResponse }>(`/api/v1/audits/${id}/evidences`),
+      api.get<{ data: AnciStatus }>(`/api/v1/audits/${id}/anci-status`),
     ])
-      .then(([findingsRes, evidencesRes]) => {
+      .then(([findingsRes, evidencesRes, anciRes]) => {
         setFindings(findingsRes.data.data);
         setMissingRequirements(evidencesRes.data.data.missing_requirements);
+        setAnci(anciRes.data.data);
       })
       .catch((err) => setError(getApiErrorMessage(err, t.loadFailed)))
       .finally(() => setLoading(false));
@@ -184,6 +189,58 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
             <strong>{dict.guestPilot.expiredTitle}.</strong> {dict.guestPilot.expiredMessage}
           </AlertDescription>
         </Alert>
+      )}
+
+      {anci && anci.technicalControls.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{dict.anci.title}</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span>{dict.anci.seLabel}</span>
+                  <span className="font-medium tabular-nums">{anci.sePercentage}%</span>
+                </div>
+                <Progress value={anci.sePercentage} className="h-1.5" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span>{dict.anci.oivLabel}</span>
+                  <span className="font-medium tabular-nums">{anci.oivPercentage}%</span>
+                </div>
+                <Progress value={anci.oivPercentage} className="h-1.5" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">{dict.anci.oivHint}</p>
+
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">{dict.anci.technicalControls}</h3>
+              <ul className="flex flex-col divide-y">
+                {anci.technicalControls.map((control) => (
+                  <li key={control.code} className="flex items-center justify-between gap-3 py-2 text-sm">
+                    <div className="flex flex-col">
+                      <span className="font-medium">{control.title}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{control.code}</span>
+                    </div>
+                    <Badge
+                      variant={
+                        control.status === "ok" ? "default" : control.status === "fail" ? "destructive" : "secondary"
+                      }
+                    >
+                      {control.status === "ok"
+                        ? dict.anci.statusOk
+                        : control.status === "fail"
+                          ? dict.anci.statusFail
+                          : dict.anci.statusNotScanned}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card>

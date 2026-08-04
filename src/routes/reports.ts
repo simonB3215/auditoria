@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
@@ -7,8 +7,14 @@ import { supabaseForUser, supabaseAdmin } from "../config/supabase.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
 import { env } from "../config/env.js";
 import { evaluateCoverage } from "../services/coverageEngine.js";
+import { evaluateAnciCoverage } from "../services/anciCoverageEngine.js";
 import { calculateRiskScore } from "../services/riskScoring.js";
-import { buildAuditReportPdf, type ReportFinding, type ReportEvidenceIssue } from "../services/pdfReport.js";
+import {
+  buildAuditReportPdf,
+  type ReportFinding,
+  type ReportEvidenceIssue,
+  type ReportEvidenceLedgerEntry,
+} from "../services/pdfReport.js";
 import type { FindingSeverity } from "../services/findingsNormalization.js";
 import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
@@ -39,20 +45,31 @@ reportsRouter.get(
       throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
     }
 
-    const [{ data: findings, error: findingsError }, { data: evidences, error: evidencesError }] =
-      await Promise.all([
-        supabase.from("findings").select("title, severity, status, detail, remediation").eq("audit_id", auditId),
-        supabase
-          .from("audit_evidences")
-          .select("file_name, requirement_code, validation_errors")
-          .eq("audit_id", auditId)
-          .eq("validation_status", "invalid"),
-      ]);
+    const [
+      { data: findings, error: findingsError },
+      { data: evidences, error: evidencesError },
+      { data: evidenceLedger, error: ledgerError },
+    ] = await Promise.all([
+      supabase.from("findings").select("title, severity, status, detail, remediation").eq("audit_id", auditId),
+      supabase
+        .from("audit_evidences")
+        .select("file_name, requirement_code, validation_errors")
+        .eq("audit_id", auditId)
+        .eq("validation_status", "invalid"),
+      supabase
+        .from("audit_evidences")
+        .select("file_name, requirement_code, validation_status, created_at")
+        .eq("audit_id", auditId)
+        .order("created_at", { ascending: true }),
+    ]);
 
     if (findingsError) throw new AppError(400, "FINDINGS_FETCH_FAILED", findingsError.message);
     if (evidencesError) throw new AppError(400, "EVIDENCES_FETCH_FAILED", evidencesError.message);
+    if (ledgerError) throw new AppError(400, "EVIDENCE_LEDGER_FETCH_FAILED", ledgerError.message);
 
     const coverage = await evaluateCoverage(supabase, auditId, audit.framework);
+    const anci = await evaluateAnciCoverage(supabase, auditId, audit.framework);
+    const isAnciFramework = audit.framework === "ley_21663_cl";
 
     // Un hallazgo marcado como falso positivo o riesgo aceptado (con
     // justificación de un auditor, ver PATCH /findings/:id/status) ya no
@@ -69,14 +86,47 @@ reportsRouter.get(
       completionPercentage: coverage.completion_percentage,
     });
 
+    const generatedAt = new Date();
+
+    // Hash de integridad del documento: no es una firma digital legalmente
+    // vinculante (eso requeriría PKI/certificado calificado, fuera de
+    // alcance) — es una huella SHA-256 sobre el contenido del reporte que
+    // permite comprobar después que no fue alterado. Se etiqueta como tal
+    // en el PDF, nunca como "firma electrónica avanzada".
+    const integrityHash = isAnciFramework
+      ? createHash("sha256")
+          .update(
+            JSON.stringify({
+              auditId,
+              framework: audit.framework,
+              riskScore: riskScore.score,
+              coveragePercentage: coverage.completion_percentage,
+              sePercentage: anci.sePercentage,
+              oivPercentage: anci.oivPercentage,
+              findings: (findings ?? []).map((f) => ({ title: f.title, severity: f.severity, status: f.status })),
+              generatedAt: generatedAt.toISOString(),
+            })
+          )
+          .digest("hex")
+      : null;
+
     const pdfBuffer = await buildAuditReportPdf({
       auditTitle: audit.title,
       framework: audit.framework,
-      generatedAt: new Date(),
+      generatedAt,
       riskScore,
       coverage,
       findings: (findings ?? []) as ReportFinding[],
       invalidEvidences: (evidences ?? []) as ReportEvidenceIssue[],
+      anci: isAnciFramework
+        ? {
+            sePercentage: anci.sePercentage,
+            oivPercentage: anci.oivPercentage,
+            technicalControls: anci.technicalControls,
+            evidenceLedger: (evidenceLedger ?? []) as ReportEvidenceLedgerEntry[],
+            integrityHash: integrityHash!,
+          }
+        : undefined,
     });
 
     const reportId = randomUUID();

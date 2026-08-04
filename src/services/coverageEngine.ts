@@ -17,7 +17,11 @@ export async function evaluateCoverage(
   auditId: string,
   framework: string
 ): Promise<CoverageResult> {
-  const requirements = getRequirementsForFramework(framework);
+  // Los requisitos "technical" (ver LEY_21663_CL) se satisfacen contra los
+  // hallazgos del motor de escaneo, no con una evidencia subida — ver
+  // evaluateAnciCoverage(). Contarlos acá los dejaría eternamente
+  // "faltantes" en la cobertura documental aunque el escaneo esté limpio.
+  const requirements = getRequirementsForFramework(framework).filter((r) => r.kind !== "technical");
 
   const { data: evidences, error } = await supabase
     .from("audit_evidences")

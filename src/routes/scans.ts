@@ -111,6 +111,7 @@ scansRouter.post(
       organizationId: audit.organization_id,
       auditId,
       assets: scanTargets,
+      actorId: profile.id,
     });
 
     res.status(202).json({

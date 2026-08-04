@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import type { RiskScoreResult } from "./riskScoring.js";
 import type { CoverageResult } from "./coverageEngine.js";
 import type { FindingSeverity } from "./findingsNormalization.js";
+import type { TechnicalControlResult } from "./anciCoverageEngine.js";
 
 export interface ReportFinding {
   title: string;
@@ -16,6 +17,21 @@ export interface ReportEvidenceIssue {
   validation_errors: string[] | null;
 }
 
+export interface ReportEvidenceLedgerEntry {
+  file_name: string;
+  requirement_code: string | null;
+  validation_status: string;
+  created_at: string;
+}
+
+export interface ReportAnciSection {
+  sePercentage: number;
+  oivPercentage: number;
+  technicalControls: TechnicalControlResult[];
+  evidenceLedger: ReportEvidenceLedgerEntry[];
+  integrityHash: string;
+}
+
 export interface BuildReportInput {
   auditTitle: string;
   framework: string;
@@ -24,6 +40,7 @@ export interface BuildReportInput {
   coverage: CoverageResult;
   findings: ReportFinding[];
   invalidEvidences: ReportEvidenceIssue[];
+  anci?: ReportAnciSection;
 }
 
 const SEVERITY_ORDER: FindingSeverity[] = ["critical", "high", "medium", "low"];
@@ -107,6 +124,57 @@ export async function buildAuditReportPdf(input: BuildReportInput): Promise<Buff
       }
       doc.moveDown(0.5);
     }
+  }
+
+  // --- Informe de Posición de Riesgo - Ley 21.663 (ANCI) ---
+  if (input.anci) {
+    doc.addPage();
+    doc.fontSize(16).text("Informe de Posición de Riesgo — Ley 21.663 (ANCI)", { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(12);
+    doc.text(`Cumplimiento Servicios Esenciales (SE): ${input.anci.sePercentage}%`);
+    doc.text(`Cumplimiento Operadores de Importancia Vital (OIV): ${input.anci.oivPercentage}%`);
+    doc.moveDown();
+
+    doc.fontSize(14).text("Controles técnicos verificados por escaneo", { underline: true });
+    doc.moveDown(0.3);
+    doc.fontSize(11);
+    if (input.anci.technicalControls.length === 0) {
+      doc.text("No hay controles técnicos definidos para este framework.");
+    } else {
+      for (const control of input.anci.technicalControls) {
+        const label = control.status === "ok" ? "CUMPLE" : control.status === "fail" ? "NO CUMPLE" : "SIN ESCANEAR";
+        doc.text(`  [${label}] ${control.code} — ${control.title}`);
+      }
+    }
+    doc.moveDown();
+
+    doc.fontSize(14).text("Bitácora de evidencias", { underline: true });
+    doc.moveDown(0.3);
+    doc.fontSize(11);
+    if (input.anci.evidenceLedger.length === 0) {
+      doc.text("No se cargaron evidencias documentales para esta auditoría.");
+    } else {
+      for (const entry of input.anci.evidenceLedger) {
+        const when = new Date(entry.created_at).toLocaleString("es-CL");
+        doc.text(
+          `  • ${entry.file_name}${entry.requirement_code ? ` (${entry.requirement_code})` : ""} — ${entry.validation_status} — ${when}`
+        );
+      }
+    }
+    doc.moveDown();
+
+    doc.fontSize(14).text("Verificación de integridad del documento", { underline: true });
+    doc.moveDown(0.3);
+    doc.fontSize(9).text(
+      "Hash SHA-256 calculado sobre el contenido de este reporte al momento de su generación. Permite " +
+        "comprobar que el documento no fue alterado después de emitido. No constituye una firma electrónica " +
+        "avanzada ni calificada en los términos de la Ley N° 19.799.",
+      { width: 480 }
+    );
+    doc.moveDown(0.3);
+    doc.font("Courier").fontSize(9).text(input.anci.integrityHash);
+    doc.font("Helvetica");
   }
 
   doc.end();

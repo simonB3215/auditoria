@@ -25,6 +25,7 @@ export default function NewAuditPage() {
     { value: "nist_csf", label: dict.dashboard.frameworks.nist_csf },
     { value: "gdpr", label: dict.dashboard.frameworks.gdpr },
     { value: "local_dp_law", label: dict.dashboard.frameworks.local_dp_law },
+    { value: "ley_21663_cl", label: dict.dashboard.frameworks.ley_21663_cl },
   ];
 
   const [title, setTitle] = useState("");

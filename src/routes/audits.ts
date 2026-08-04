@@ -5,19 +5,22 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
+import { evaluateAnciCoverage } from "../services/anciCoverageEngine.js";
 
 export const auditsRouter = Router();
 
+const FRAMEWORKS = ["iso27001", "nist_csf", "gdpr", "local_dp_law", "ley_21663_cl"] as const;
+
 const createAuditSchema = z.object({
   title: z.string().trim().min(3).max(200),
-  framework: z.enum(["iso27001", "nist_csf", "gdpr", "local_dp_law"]),
+  framework: z.enum(FRAMEWORKS),
   asset_ids: z.array(z.string().uuid()).max(200).optional(),
 });
 
 const updateAuditSchema = z
   .object({
     title: z.string().trim().min(3).max(200).optional(),
-    framework: z.enum(["iso27001", "nist_csf", "gdpr", "local_dp_law"]).optional(),
+    framework: z.enum(FRAMEWORKS).optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "Debés incluir al menos un campo a actualizar (title y/o framework)",
@@ -104,6 +107,36 @@ auditsRouter.get(
       throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada");
     }
 
+    res.status(200).json({ data });
+  })
+);
+
+/**
+ * Cumplimiento ANCI (Ley 21.663): % diferenciado por Servicios Esenciales
+ * (SE) y Operadores de Importancia Vital (OIV) + estado de los controles
+ * técnicos verificados por el motor de escaneo. Devuelve 100/100 sin
+ * controles para cualquier framework que no tenga requisitos con `tier`
+ * (todos salvo ley_21663_cl) — el frontend solo muestra este panel cuando
+ * corresponde.
+ */
+auditsRouter.get(
+  "/audits/:id/anci-status",
+  authenticateToken,
+  validateUuidParams("id"),
+  asyncHandler(async (req, res) => {
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+    const auditId = String(req.params.id);
+
+    const { data: audit, error: auditError } = await supabase
+      .from("audits")
+      .select("id, framework")
+      .eq("id", auditId)
+      .maybeSingle();
+    if (auditError) throw new AppError(400, "AUDIT_FETCH_FAILED", auditError.message);
+    if (!audit) throw new AppError(404, "AUDIT_NOT_FOUND", "Auditoría no encontrada o sin acceso");
+
+    const data = await evaluateAnciCoverage(supabase, auditId, audit.framework);
     res.status(200).json({ data });
   })
 );
