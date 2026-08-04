@@ -152,8 +152,14 @@ URLs de Supabase.
   organización, ni aunque el backend tuviera un bug — la base de datos misma
   lo bloquea.
 - **Platform admin**: rol aparte del RBAC por-org (`profiles.is_platform_admin`),
-  ve/administra todas las organizaciones vía `/api/v1/admin/*`. Solo se
-  otorga con `npm run admin:promote`, nunca vía API.
+  ve/administra todas las organizaciones vía `/api/v1/admin/*`. Se otorga con
+  `npm run admin:promote` (nunca vía API pública) o, una vez que existe al
+  menos un platform admin, desde `/admin` en el frontend (gestión de roles
+  de otros usuarios, gateada por `requirePlatformAdmin`).
+- **Suspensión de organizaciones**: un platform admin puede suspender una
+  organización (`PATCH /admin/organizations/:id/suspend`); sus usuarios
+  pierden acceso a la API hasta reactivarla (el propio platform admin nunca
+  queda bloqueado por esto).
 
 ### Flujo de una auditoría
 1. Se crea la auditoría (`POST /audits`) eligiendo un framework.
@@ -164,8 +170,11 @@ URLs de Supabase.
    escanearse hasta probar su propiedad (DNS TXT para dominios, autoatestación
    de rol `ciso` para IP/CIDR).
 4. `POST /audits/:id/run-scan` encola un job (BullMQ/Redis); el worker
-   (proceso aparte) corre Nmap y normaliza los resultados a `findings` con
-   severidad.
+   (proceso aparte) corre Nmap, además de un chequeo de certificados TLS
+   (vencimiento, confianza, protocolo débil) y de cabeceras de seguridad
+   HTTP faltantes sobre los puertos web que encuentra abiertos, y normaliza
+   todo a `findings` con severidad. Activos tipo repositorio/servidor cloud
+   se excluyen del escaneo de red (nmap no aplica a esos tipos).
 5. `GET /audits/:id/report` calcula el puntaje de riesgo, genera un PDF, lo
    sube a Storage, y devuelve un signed URL de descarga de corta duración.
 
@@ -191,15 +200,19 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | POST | `/audits/:id/evidences` | Subir evidencia (multipart) |
 | GET | `/audits/:id/evidences` | Listar evidencias + cobertura actual |
 | GET | `/frameworks/:framework/requirements` | Checklist de un framework |
-| POST / GET | `/assets` | Crear / listar activos |
-| GET | `/assets/:id` | Detalle de un activo |
+| POST / GET | `/assets` | Crear / listar activos (filtros `?type=&criticality=&tag=`) |
+| GET / DELETE | `/assets/:id` | Detalle / eliminar un activo |
 | POST | `/assets/:id/verify` | Verificar propiedad de un activo |
 | POST | `/audits/:id/run-scan` | Encolar un escaneo asíncrono |
 | GET | `/audits/:id/findings` | Hallazgos (filtrable por `?severity=`) |
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
 | GET | `/dashboard/summary` | Métricas agregadas para el dashboard |
-| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones |
+| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones + uso de storage |
+| PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva una organización |
 | DELETE | `/admin/organizations/:id` | *(platform admin)* Borra una organización |
+| GET | `/admin/organizations/:id/members` | *(platform admin)* Usuarios de una organización |
+| GET | `/admin/organizations/:id/activity` | *(platform admin)* Actividad reciente |
+| POST | `/admin/users/role` | *(platform admin)* Cambia rol y/o `platform_admin` de un usuario |
 
 ---
 
@@ -209,9 +222,12 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 |---|---|
 | `/login`, `/register` | Auth (email/password + Google) |
 | `/onboarding` | Paso final de registro (crear organización) si todavía no existe el perfil |
-| `/dashboard` | Métricas, distribución de riesgos, alta de auditorías |
+| `/dashboard` | Métricas, distribución de riesgos, alta rápida de auditorías |
+| `/assets` | Gestión de activos: tabla con filtros, alta/edición, verificación, borrado |
+| `/audits/new` | Creación de auditoría con selección múltiple de activos |
 | `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) |
 | `/audits/[id]/report` | Hallazgos filtrables por severidad + descarga de PDF |
+| `/admin` | *(solo platform admin)* Métricas de plataforma, gestión de organizaciones, roles y actividad |
 
 Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 `localStorage`.
@@ -220,11 +236,17 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 
 ## Limitaciones conocidas / próximos pasos
 
-- No hay pantalla de frontend para gestión de activos (CRUD/verificación) ni
-  para lanzar escaneos — los endpoints existen, la UI todavía no.
-- No hay pantalla de admin de plataforma en el frontend (solo el endpoint).
+- No hay pantalla de frontend para lanzar escaneos manualmente desde
+  `/audits/[id]` (el endpoint `POST /audits/:id/run-scan` existe, falta el
+  botón) — la creación de la auditoría con activos sí está resuelta.
 - El worker de escaneo requiere `nmap` instalado donde corra; si no está, la
-  auditoría queda en `failed` (no se inventan resultados).
+  auditoría queda en `failed` (no se inventan resultados). Los chequeos de
+  TLS/cabeceras HTTP no dependen de nmap.
+- El "log de actividad" de `/admin` es una vista basada en los `created_at`
+  ya existentes (últimas auditorías/activos/evidencias), no un log de
+  auditoría exhaustivo con cada escritura instrumentada.
+- La estimación de almacenamiento en `/admin` suma `audit_evidences.size_bytes`
+  (ya se guarda por evidencia); no consulta la Management API de Supabase.
 - La suite de tests (`npm test`) necesita un proyecto Supabase **de test**
   separado — no se puede correr sin esa infraestructura.
 - No hay flujo de "cambiar contraseña" ni "invitar a un compañero de equipo"
