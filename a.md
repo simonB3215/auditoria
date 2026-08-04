@@ -1,76 +1,61 @@
-# PLAN DE IMPLEMENTACIÓN Y EJECUCIÓN TÉCNICA (MVP)
+# PROMPT: MÓDULO DE COMPLIANCE, TRAZABILIDAD Y RETENCIÓN DE DATOS (FASE ENTERPRISE)
 
-> **Instrucciones para la IA ejecutora:** Actúa como un Desarrollador Fullstack Senior y Especialista en Ciberseguridad. Tu objetivo es implementar el MVP de la plataforma de auditoría de ciberseguridad siguiendo estrictamente la arquitectura, el modelo de datos y las 4 fases detalladas a continuación. Cada módulo debe incluir manejo de errores, seguridad en los inputs y código modular en TypeScript/Node.js y Supabase.
-
----
-
-## 🚀 FASE 1: Cimientos, Base de Datos y Autenticación (Sprint 1)
-
-### Objetivo
-Configurar el entorno base, desplegar el esquema de base de datos PostgreSQL con Row Level Security (RLS) en Supabase y establecer el sistema de autenticación JWT con control de acceso basado en roles (RBAC).
-
-### Tareas de Implementación
-1. **Setup Inicial del Proyecto:**
-   * Crear la estructura de carpetas en Node.js / Express con TypeScript (`/src`: `config`, `controllers`, `services`, `middlewares`, `routes`, `types`).
-   * Configurar `Helmet`, `CORS` restringido y `express-rate-limit`.
-   * Inicializar el cliente oficial de Supabase mediante `@supabase/supabase-js`.
-2. **Despliegue del Esquema de BD y RLS:**
-   * Ejecutar el script SQL para crear las tablas: `profiles`, `assets`, `audits`, `audit_assets`, `audit_evidences`, `findings` y `reports`.
-   * Habilitar RLS en todas las tablas y definir políticas donde `created_by = auth.uid()`.
-3. **Middlewares de Seguridad:**
-   * Crear `authenticateToken`: valida el JWT de Supabase extraído de los encabezados `Authorization: Bearer <token>`.
-   * Crear `requireRole(['ciso', 'auditor'])`: valida los permisos del perfil almacenado en `profiles`.
+> **Instrucciones para la IA ejecutora:** Actúa como un Arquitecto de Software Senior y Especialista en Ciberseguridad/Compliance. Tu objetivo es implementar 3 características críticas de seguridad y cumplimiento normativo (ISO 27001, GDPR) dentro de la plataforma existente (Next.js 16, Express, Supabase RLS y PostgreSQL).
 
 ---
 
-## 📂 FASE 2: Ingesta de Evidencias, Validación y Matriz de Cobertura (Sprint 2 - Parte 1)
+## 🛠️ MÓDULOS A IMPLEMENTAR
 
-### Objetivo
-Construir la API para la carga de evidencias y el **motor de validación** que detecte automáticamente si falta documentación o si los archivos subidos contienen errores.
+### 1. Sistema de Logs de Auditoría Inmutables (Audit Logs & Trazabilidad ISO 27001)
 
-### Tareas de Implementación
-1. **Carga Segura de Archivos:**
-   * Endpoint `POST /api/v1/audits/:id/evidences` utilizando `Multer` en memoria (sin escribir en disco).
-2. **Capa 1: Validación Estructural (Sintaxis):**
-   * Inspección de encabezados *Magic Bytes* (usando paquetes como `file-type`) para asegurar que el formato interno coincida con extensiones permitidas (`.pdf`, `.json`, `.xlsx`). Rechazar binarios no identificados o ejecutables.
-3. **Capa 2: Validación Semántica y Cobertura:**
-   * Crear el servicio `CoverageEngine` que compare las evidencias cargadas contra la lista de requisitos mínimos de la norma (ej: ISO 27001).
-   * Validar que los archivos parseables (Excel/JSON) contengan los campos o columnas obligatorias (ej: IP, Criticidad, Responsable).
-4. **Almacenamiento y Notificación:**
-   * Subir archivos validados al Bucket privado de Supabase Storage con encriptación.
-   * Retornar un objeto JSON con el cálculo de cobertura (`completion_percentage`), errores detectados y lista de requisitos pendientes (`missing_requirements`).
+#### A. Base de Datos & RLS:
+- Crear la tabla `audit_logs` en PostgreSQL con los campos: `id`, `organization_id`, `actor_id` (quién ejecutó la acción), `action` (ej: `EVIDENCE_APPROVED`, `FINDING_CRITICALITY_CHANGED`, `REPORT_DOWNLOADED`), `resource_type`, `resource_id`, `payload_before`, `payload_after`, `ip_address`, `user_agent`, `created_at`.
+- **Política RLS Inmutable:** Habilitar RLS permitiendo solo operaciones `INSERT` y `SELECT`. Bloquear estrictamente operaciones `UPDATE` y `DELETE` en la tabla `audit_logs` para asegurar que el historial sea inalterable.
 
----
+#### B. Middlewares e Interceptores Backend:
+- Crear un servicio global `AuditLogger` que registre automáticamente en la BD cuando ocurran los siguientes eventos:
+  1. Aprobación, rechazo o subida de evidencias.
+  2. Modificación de la criticidad o sugerencia de un hallazgo.
+  3. Generación y descarga de reportes ejecutivos PDF.
+  4. Cambios en roles de usuarios o configuraciones de organización.
 
-## ⚡ FASE 3: Motor de Escaneo y Gestión de Hallazgos (Sprint 2 - Parte 2)
-
-### Objetivo
-Integrar la ejecución de análisis de infraestructura y el registro de vulnerabilidades/hallazgos asociados a los activos de la organización.
-
-### Tareas de Implementación
-1. **Gestión de Activos (CRUD):**
-   * Endpoints `POST /api/v1/assets` y `GET /api/v1/assets` con validación de sintaxis para direcciones IP, rangos CIDR y dominios.
-2. **Motor de Escaneo Asíncrono:**
-   * Endpoint `POST /api/v1/audits/:id/run-scan` que delegue las tareas de red/puertos a una cola de ejecución en segundo plano (usando BullMQ / Redis o procesos Worker).
-3. **Normalización de Hallazgos:**
-   * Transformar los resultados del escaneo (puertos abiertos, cifrados débiles, faltas de parches) e insertarlos en la tabla `findings` asignando la severidad correspondiente (`critical`, `high`, `medium`, `low`).
+#### C. Frontend (`/audits/[id]/history` y `/admin/audit-logs`):
+- Crear una pestaña o modal de "Historial de Cambios" dentro de cada auditoría para ver la línea de tiempo (*timeline*) de acciones ejecutadas por los usuarios con fecha, hora, IP y usuario responsable.
 
 ---
 
-## 📊 FASE 4: Consolidación de Riesgos y Generación de Reportes (Sprint 3)
+### 2. Políticas de Retención y Purga Automatizada de Datos (Data Retention / GDPR)
 
-### Objetivo
-Calcular la puntuación global de riesgo de la organización y generar un reporte ejecutivo descargable en formato PDF.
+#### A. Configuración de Políticas de Retención (Backend / BD):
+- Agregar el campo `retention_period_days` (ej. 30, 90, 365 días) en la tabla `organizations` o configuraciones de auditoría.
+- Crear una función almacenada en PostgreSQL o un script de tarea programada (Cron Job / Worker de BullMQ) llamado `DataRetentionEngine`.
 
-### Tareas de Implementación
-1. **Algoritmo de Scoring (Ponderación de Riesgo):**
-   * Implementar la función de cálculo de riesgo combinando el déficit de documentación con los hallazgos técnicos:
-     $$\text{Puntaje} = 100 - (\sum \text{Hallazgos por Severidad} + \text{Penalización por Cobertura Incompleta})$$
-2. **Generación de Reportes:**
-   * Endpoint `GET /api/v1/audits/:id/report`.
-   * Integración de una librería PDF (`pdfkit` o `puppeteer`) para renderizar un documento estructurado que incluya:
-     * Resumen Ejecutivo (Score de Riesgo y Nivel de Cumplimiento).
-     * Tabla de Evidencias Faltantes e Incoherencias Detectadas.
-     * Desglose de Hallazgos y Sugerencias de Remediación.
-3. **Hardening Final pre-despliegue:**
-   * Revisión de variables de entorno, sanitización estricta de entradas en todas las rutas y pruebas E2E del flujo completo.
+#### B. Motor de Purga Autónoma:
+- El motor debe identificar registros y archivos de evidencias en Supabase Storage cuya antigüedad supere el periodo de retención configurado para la organización.
+- Borrado seguro de archivos en Supabase Storage y marcado del estado del registro a `purged` en la BD (manteniendo el metadato del log para fines legales, pero eliminando el binario/documento sensible para cumplir con GDPR y privacidad).
+
+#### C. Frontend (`/settings/retention`):
+- Permitir a los usuarios con rol `ciso` o `admin` configurar el tiempo de vida máximo de sus evidencias subidas y ver el estado de almacenamiento/purga programada.
+
+---
+
+### 3. Gestión de Falsos Positivos y Riesgos Aceptados (Risk Management)
+
+#### A. API Backend:
+- Endpoint `PATCH /api/v1/findings/:id/status` que permita cambiar el estado de un hallazgo a: `active`, `false_positive`, o `risk_accepted`.
+- Requerir obligatoriamente los campos: `justification_notes` (texto explicativo de la razón técnica) y `reviewed_by` (ID del auditor que lo autoriza).
+- **Ajuste del Motor de Scoring:** Excluir automáticamente los hallazgos marcados como `false_positive` o `risk_accepted` del cálculo de la penalización del puntaje global de riesgo de la auditoría.
+
+#### B. Frontend (`/audits/[id]/report`):
+- En la tabla de hallazgos del reporte, agregar un menú de acción por cada vulnerabilidad: *"Marcar como Falso Positivo"* / *"Aceptar Riesgo"*.
+- Modal de justificación técnica antes de confirmar la acción.
+- Distinción visual con Badges de estado (ej: badge gris con ícono para "Falso Positivo" y badge amarillo con ícono para "Riesgo Aceptado").
+
+---
+
+## 📄 ENTREGABLES REQUERIDOS
+
+1. Migration SQL para la tabla `audit_logs` con sus políticas de inmutabilidad (solo `INSERT`/`SELECT`) y campos de justificación en `findings`.
+2. Código fuente del servicio `AuditLogger` y middlewares asociados en Express.
+3. Worker/Cron Job para el motor de retención y purga segura de archivos en Supabase Storage.
+4. Componentes y modales actualizados en la UI de Next.js (`/audits/[id]` y vista de reportes).

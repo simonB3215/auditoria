@@ -12,6 +12,7 @@ import { detectFileKind, validateSemanticContent } from "../services/fileValidat
 import { uploadEncryptedEvidence } from "../services/evidenceStorage.js";
 import { evaluateCoverage } from "../services/coverageEngine.js";
 import { findRequirement } from "../data/complianceRequirements.js";
+import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
 export const evidencesRouter = Router();
 
@@ -137,6 +138,20 @@ evidencesRouter.post(
     if (insertError) {
       throw new AppError(400, "EVIDENCE_INSERT_FAILED", insertError.message);
     }
+
+    await logAuditEvent({
+      organizationId: audit.organization_id,
+      actorId: profile.id,
+      action: AUDIT_ACTIONS.EVIDENCE_UPLOADED,
+      resourceType: "evidence",
+      resourceId: evidence.id,
+      payloadAfter: {
+        file_name: evidence.file_name,
+        requirement_code: evidence.requirement_code,
+        validation_status: evidence.validation_status,
+      },
+      ...requestContext(req),
+    });
 
     const coverage = await evaluateCoverage(supabase, audit.id, audit.framework);
 

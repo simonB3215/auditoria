@@ -5,6 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
+import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
 export const adminRouter = Router();
 
@@ -87,6 +88,16 @@ adminRouter.patch(
     if (error) throw new AppError(400, "ORGANIZATION_SUSPEND_FAILED", error.message);
     if (!data) throw new AppError(404, "ORGANIZATION_NOT_FOUND", "Organización no encontrada");
 
+    await logAuditEvent({
+      organizationId: data.id,
+      actorId: req.profile!.id,
+      action: body.suspended ? AUDIT_ACTIONS.ORGANIZATION_SUSPENDED : AUDIT_ACTIONS.ORGANIZATION_REACTIVATED,
+      resourceType: "organization",
+      resourceId: data.id,
+      payloadAfter: { name: data.name, is_suspended: data.is_suspended },
+      ...requestContext(req),
+    });
+
     res.status(200).json({ data });
   })
 );
@@ -98,10 +109,32 @@ adminRouter.delete(
   requirePlatformAdmin,
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
-    const { error } = await supabaseAdmin.from("organizations").delete().eq("id", req.params.id);
+    const { data: org } = await supabaseAdmin
+      .from("organizations")
+      .select("id, name")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    // Se registra ANTES de borrar: la FK de audit_logs.organization_id
+    // exige que la organización exista en el momento del insert. Después
+    // del borrado, esta misma fila queda con organization_id en null (ver
+    // migración 011) pero sigue consultable desde /admin/audit-logs.
+    const orgId = String(req.params.id);
+    await logAuditEvent({
+      organizationId: orgId,
+      actorId: req.profile!.id,
+      action: AUDIT_ACTIONS.ORGANIZATION_DELETED,
+      resourceType: "organization",
+      resourceId: orgId,
+      payloadBefore: org ? { name: org.name } : null,
+      ...requestContext(req),
+    });
+
+    const { error } = await supabaseAdmin.from("organizations").delete().eq("id", orgId);
     if (error) {
       throw new AppError(400, "ORGANIZATION_DELETE_FAILED", error.message);
     }
+
     res.status(204).send();
   })
 );
@@ -213,6 +246,12 @@ adminRouter.post(
     if (body.role !== undefined) update.role = body.role;
     if (body.isPlatformAdmin !== undefined) update.is_platform_admin = body.isPlatformAdmin;
 
+    const { data: before } = await supabaseAdmin
+      .from("profiles")
+      .select("organization_id, role, is_platform_admin")
+      .eq("id", body.userId)
+      .maybeSingle();
+
     const { data, error } = await supabaseAdmin
       .from("profiles")
       .update(update)
@@ -222,6 +261,17 @@ adminRouter.post(
 
     if (error) throw new AppError(400, "USER_ROLE_UPDATE_FAILED", error.message);
     if (!data) throw new AppError(404, "USER_NOT_FOUND", "Usuario no encontrado");
+
+    await logAuditEvent({
+      organizationId: data.organization_id,
+      actorId: req.profile!.id,
+      action: AUDIT_ACTIONS.USER_ROLE_CHANGED,
+      resourceType: "user",
+      resourceId: data.id,
+      payloadBefore: before ? { role: before.role, is_platform_admin: before.is_platform_admin } : null,
+      payloadAfter: { role: data.role, is_platform_admin: data.is_platform_admin },
+      ...requestContext(req),
+    });
 
     res.status(200).json({ data });
   })

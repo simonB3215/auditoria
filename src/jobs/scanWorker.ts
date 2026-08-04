@@ -14,6 +14,7 @@ const NETWORK_SCANNABLE_TYPES = new Set(["ip", "domain", "cidr"]);
 
 async function processScanJob(job: Job<ScanJobData>): Promise<void> {
   const { auditId, assets } = job.data;
+  const startedAt = new Date();
 
   await supabaseAdmin.from("audits").update({ status: "running" }).eq("id", auditId);
 
@@ -74,6 +75,19 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     .from("audits")
     .update({ status: allFailed ? "failed" : "completed" })
     .eq("id", auditId);
+
+  // Registro de la ejecución para el motor de costos FinOps (src/services/costEngine.ts):
+  // sin esto no hay forma de saber cuántas veces se re-escaneó una auditoría
+  // ni cuánto "tiempo de worker" consumió.
+  const finishedAt = new Date();
+  await supabaseAdmin.from("scan_runs").insert({
+    audit_id: auditId,
+    assets_scanned: scannable.length,
+    findings_count: allFindings.length,
+    status: allFailed ? "failed" : "completed",
+    started_at: startedAt.toISOString(),
+    finished_at: finishedAt.toISOString(),
+  });
 
   if (failures.length > 0) {
     console.error(`[scan-worker] audit=${auditId} fallos parciales:\n${failures.join("\n")}`);

@@ -87,6 +87,14 @@
   --severity-high: #ec835a;
   --severity-medium: #fab219;
   --severity-low: #0ca30c;
+
+  /* Paleta categórica para los gráficos de costos (FinOps) - orden fijo. */
+  --cost-supabase-db: #2a78d6;
+  --cost-supabase-storage: #eb6834;
+  --cost-redis-workers: #1baf7a;
+  --cost-scan-engine: #eda100;
+  --cost-pdf-engine: #e87ba4;
+  --cost-hosting: #008300;
 }
 
 .dark {
@@ -121,6 +129,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  --cost-supabase-db: #3987e5;
+  --cost-supabase-storage: #d95926;
+  --cost-redis-workers: #199e70;
+  --cost-scan-engine: #c98500;
+  --cost-pdf-engine: #d55181;
+  --cost-hosting: #008300;
 }
 
 @layer base {

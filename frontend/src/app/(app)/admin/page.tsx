@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, Database, ShieldAlert as ShieldAlertIcon, Trash2, Users } from "lucide-react";
+import Link from "next/link";
+import { Building2, Database, DollarSign, FileClock, ShieldAlert as ShieldAlertIcon, Trash2, Users } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { AdminActivityEvent, AdminMember, AdminOrganization, UserRole } from "@/lib/types";
 import { useProfile } from "@/hooks/useProfile";
@@ -135,9 +136,25 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">{t.title}</h1>
-        <p className="text-sm text-muted-foreground">{t.subtitle}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">{t.title}</h1>
+          <p className="text-sm text-muted-foreground">{t.subtitle}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/audit-logs">
+              <FileClock className="size-3.5" aria-hidden />
+              {t.auditLogsNavButton}
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin/costs">
+              <DollarSign className="size-3.5" aria-hidden />
+              {t.costsNavButton}
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {loading ? (

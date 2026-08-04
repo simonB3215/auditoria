@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser } from "lucide-react";
+import { LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser, Timer } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
 import { useI18n } from "@/lib/i18n/context";
@@ -54,6 +54,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <Server className="size-4" aria-hidden />
               {t.assets}
             </Link>
+            {(profile?.role === "ciso" || profile?.isPlatformAdmin) && (
+              <Link
+                href="/settings/retention"
+                className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+              >
+                <Timer className="size-4" aria-hidden />
+                {t.settings}
+              </Link>
+            )}
             {profile?.isPlatformAdmin && (
               <Link
                 href="/admin"

@@ -10,6 +10,7 @@ import { evaluateCoverage } from "../services/coverageEngine.js";
 import { calculateRiskScore } from "../services/riskScoring.js";
 import { buildAuditReportPdf, type ReportFinding, type ReportEvidenceIssue } from "../services/pdfReport.js";
 import type { FindingSeverity } from "../services/findingsNormalization.js";
+import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
 const SIGNED_URL_TTL_SECONDS = 5 * 60;
 
@@ -40,7 +41,7 @@ reportsRouter.get(
 
     const [{ data: findings, error: findingsError }, { data: evidences, error: evidencesError }] =
       await Promise.all([
-        supabase.from("findings").select("title, severity, detail, remediation").eq("audit_id", auditId),
+        supabase.from("findings").select("title, severity, status, detail, remediation").eq("audit_id", auditId),
         supabase
           .from("audit_evidences")
           .select("file_name, requirement_code, validation_errors")
@@ -53,8 +54,13 @@ reportsRouter.get(
 
     const coverage = await evaluateCoverage(supabase, auditId, audit.framework);
 
+    // Un hallazgo marcado como falso positivo o riesgo aceptado (con
+    // justificación de un auditor, ver PATCH /findings/:id/status) ya no
+    // representa un riesgo real: no debe penalizar el puntaje, aunque sigue
+    // apareciendo en el reporte para dejar constancia de la decisión.
     const severityCounts: Record<FindingSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const finding of findings ?? []) {
+      if (finding.status === "false_positive" || finding.status === "accepted_risk") continue;
       severityCounts[finding.severity as FindingSeverity] += 1;
     }
 
@@ -109,6 +115,19 @@ reportsRouter.get(
     if (signedUrlError || !signed) {
       throw new AppError(500, "SIGNED_URL_FAILED", signedUrlError?.message ?? "No se pudo firmar el link de descarga");
     }
+
+    // Un solo endpoint genera Y entrega el reporte (el signedUrl que se
+    // descarga es esta misma respuesta), así que un evento cubre ambas
+    // acciones que pide a.md ("generación y descarga").
+    await logAuditEvent({
+      organizationId: audit.organization_id,
+      actorId: profile.id,
+      action: AUDIT_ACTIONS.REPORT_GENERATED,
+      resourceType: "report",
+      resourceId: reportId,
+      payloadAfter: { auditId, riskScore: riskScore.score, complianceLevel: riskScore.complianceLevel },
+      ...requestContext(req),
+    });
 
     res.status(200).json({
       data: {

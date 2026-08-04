@@ -48,6 +48,8 @@ export interface Finding {
   remediation: string | null;
   source_engine: string;
   detected_at: string;
+  justification_notes: string | null;
+  reviewed_by: string | null;
 }
 
 export type EvidenceValidationStatus = "pending" | "valid" | "invalid";
@@ -138,4 +140,110 @@ export interface AdminActivityEvent {
   type: "audit_created" | "asset_created" | "evidence_uploaded";
   label: string;
   createdAt: string;
+}
+
+export type CostCategoryKey =
+  | "supabase_db"
+  | "supabase_storage"
+  | "redis_workers"
+  | "scan_engine"
+  | "pdf_engine"
+  | "hosting";
+
+export interface CostSummary {
+  totalMonthlyCostClp: number;
+  totalMonthlyCostCredits: number;
+  averageCostPerAuditClp: number;
+  averageCostPerAuditCredits: number;
+  topSpendingOrg: { id: string; name: string; costClp: number; costCredits: number } | null;
+  byService: { key: CostCategoryKey; costClp: number; costCredits: number; percentage: number }[];
+  totals: { storageGb: number; scansExecuted: number; reportsGenerated: number; workerHours: number; mau: number };
+}
+
+export interface DailyCostPoint {
+  date: string;
+  supabase_db: number;
+  supabase_storage: number;
+  redis_workers: number;
+  scan_engine: number;
+  pdf_engine: number;
+  hosting: number;
+  total: number;
+  totalCredits: number;
+}
+
+export interface OrgCostBreakdown {
+  organizationId: string;
+  organizationName: string;
+  costClp: number;
+  costCredits: number;
+  auditCount: number;
+}
+
+export interface CostBreakdown {
+  series: DailyCostPoint[];
+  byOrg: OrgCostBreakdown[];
+}
+
+export interface AuditCostRow {
+  auditId: string;
+  auditTitle: string;
+  organizationId: string;
+  organizationName: string;
+  storageMb: number;
+  scansExecuted: number;
+  reportsGenerated: number;
+  dbCostClp: number;
+  totalCostClp: number;
+  totalCostCredits: number;
+  breakdown: Record<CostCategoryKey, number>;
+}
+
+export interface PricingConfigRow {
+  key: string;
+  provider: string;
+  service: string;
+  unit: string;
+  unit_price: number;
+  description: string | null;
+  updated_at: string;
+}
+
+export type AuditLogAction =
+  | "EVIDENCE_UPLOADED"
+  | "FINDING_STATUS_CHANGED"
+  | "REPORT_GENERATED"
+  | "USER_ROLE_CHANGED"
+  | "ORGANIZATION_SUSPENDED"
+  | "ORGANIZATION_REACTIVATED"
+  | "ORGANIZATION_DELETED"
+  | "RETENTION_POLICY_UPDATED"
+  | "EVIDENCE_PURGED";
+
+export interface AuditLogEntry {
+  id: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  action: AuditLogAction;
+  resource_type: string;
+  resource_id: string | null;
+  payload_before: Record<string, unknown> | null;
+  payload_after: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+export interface PlatformAuditLogEntry extends AuditLogEntry {
+  organization_id: string | null;
+  organization_name: string | null;
+}
+
+export interface RetentionSettings {
+  organizationId: string;
+  organizationName: string;
+  retentionPeriodDays: number | null;
+  totalEvidences: number;
+  purgedEvidences: number;
+  eligibleForPurge: number;
 }

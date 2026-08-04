@@ -1,22 +1,40 @@
 "use client";
 
 import { useEffect, useMemo, useState, use as usePromise } from "react";
-import { Download, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Download, Loader2, MoreHorizontal, ShieldOff, CheckCircle2, RotateCcw } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
-import type { AuditReport, Finding, FindingSeverity, EvidenceListResponse } from "@/lib/types";
+import type { AuditReport, Finding, FindingSeverity, FindingStatus, EvidenceListResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
+import { useProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SeverityBadge } from "@/components/severity-badge";
+import { FindingStatusBadge } from "@/components/finding-status-badge";
+
+interface PendingStatusChange {
+  findingId: string;
+  status: FindingStatus;
+}
 
 export default function AuditReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = usePromise(params);
   const { dict } = useI18n();
   const t = dict.report;
+  const { profile } = useProfile();
+  const canReview = profile?.role === "ciso" || profile?.role === "auditor";
 
   const SEVERITY_TABS: { value: FindingSeverity | "all"; label: string }[] = [
     { value: "all", label: t.severityAll },
@@ -36,7 +54,12 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   const [generating, setGenerating] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [pendingChange, setPendingChange] = useState<PendingStatusChange | null>(null);
+  const [justification, setJustification] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  function loadFindings() {
     setLoading(true);
     setError(null);
 
@@ -50,6 +73,10 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
       })
       .catch((err) => setError(getApiErrorMessage(err, t.loadFailed)))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadFindings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -69,6 +96,34 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
       setReportError(getApiErrorMessage(err, t.generateFailed));
     } finally {
       setGenerating(false);
+    }
+  }
+
+  function openStatusDialog(findingId: string, status: FindingStatus) {
+    setPendingChange({ findingId, status });
+    setJustification("");
+    setSubmitError(null);
+  }
+
+  async function confirmStatusChange() {
+    if (!pendingChange) return;
+    if (justification.trim().length < 10) {
+      setSubmitError(t.justificationTooShort);
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await api.patch<{ data: Finding }>(`/api/v1/findings/${pendingChange.findingId}/status`, {
+        status: pendingChange.status,
+        justification_notes: justification.trim(),
+      });
+      setFindings((prev) => prev.map((f) => (f.id === res.data.data.id ? { ...f, ...res.data.data } : f)));
+      setPendingChange(null);
+    } catch (err) {
+      setSubmitError(getApiErrorMessage(err, t.statusUpdateFailed));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -92,7 +147,15 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{t.title}</h1>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/audits/${id}`}>
+              <ArrowLeft className="size-4" aria-hidden />
+              {dict.history.backToAudit}
+            </Link>
+          </Button>
+          <h1 className="text-xl font-semibold">{t.title}</h1>
+        </div>
         <div className="flex items-center gap-3">
           {report && (
             <span className="text-sm text-muted-foreground">
@@ -156,6 +219,8 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                   <TableHead>{t.colSeverity}</TableHead>
                   <TableHead>{t.colFinding}</TableHead>
                   <TableHead>{t.colRemediation}</TableHead>
+                  <TableHead>{t.colStatus}</TableHead>
+                  {canReview && <TableHead className="text-right">{t.colActions}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -166,6 +231,40 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                     </TableCell>
                     <TableCell className="font-medium">{finding.title}</TableCell>
                     <TableCell className="text-muted-foreground">{finding.remediation ?? "—"}</TableCell>
+                    <TableCell>
+                      <FindingStatusBadge status={finding.status} />
+                    </TableCell>
+                    {canReview && (
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <MoreHorizontal className="size-4" aria-hidden />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {finding.status !== "false_positive" && (
+                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "false_positive")}>
+                                <ShieldOff className="size-3.5" aria-hidden />
+                                {t.markFalsePositive}
+                              </DropdownMenuItem>
+                            )}
+                            {finding.status !== "accepted_risk" && (
+                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "accepted_risk")}>
+                                <CheckCircle2 className="size-3.5" aria-hidden />
+                                {t.acceptRisk}
+                              </DropdownMenuItem>
+                            )}
+                            {finding.status !== "open" && (
+                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "open")}>
+                                <RotateCcw className="size-3.5" aria-hidden />
+                                {t.revertToOpen}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -173,6 +272,44 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={pendingChange !== null} onOpenChange={(open) => !open && setPendingChange(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.justificationTitle}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t.justificationDesc}</p>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="justification" className="text-sm font-medium">
+                {t.justificationLabel}
+              </label>
+              <Textarea
+                id="justification"
+                rows={4}
+                placeholder={t.justificationPlaceholder}
+                value={justification}
+                onChange={(e) => setJustification(e.target.value)}
+              />
+            </div>
+
+            {submitError && (
+              <Alert variant="destructive">
+                <AlertDescription>{submitError}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPendingChange(null)} disabled={submitting}>
+                {t.cancel}
+              </Button>
+              <Button onClick={confirmStatusChange} disabled={submitting}>
+                {submitting ? t.confirming : t.confirm}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

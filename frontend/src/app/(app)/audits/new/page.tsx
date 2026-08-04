@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, Framework } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -76,7 +77,10 @@ export default function NewAuditPage() {
           <p className="text-sm text-muted-foreground">{t.subtitle}</p>
         </div>
         <Button asChild variant="ghost" size="sm">
-          <Link href="/dashboard">{t.backToDashboard}</Link>
+          <Link href="/dashboard">
+            <ArrowLeft className="size-3.5" aria-hidden />
+            {t.backToDashboard}
+          </Link>
         </Button>
       </div>
 

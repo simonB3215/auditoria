@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use as usePromise } from "react";
 import Link from "next/link";
-import { FileText } from "lucide-react";
+import { ArrowLeft, FileText, History } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Audit, ComplianceRequirement, EvidenceListResponse, EvidenceUploadResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -78,12 +78,26 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">{audit.title}</h1>
-          <p className="text-sm uppercase text-muted-foreground">{audit.framework}</p>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/dashboard">
+              <ArrowLeft className="size-4" aria-hidden />
+              {dict.newAudit.backToDashboard}
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-xl font-semibold">{audit.title}</h1>
+            <p className="text-sm uppercase text-muted-foreground">{audit.framework}</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <AuditStatusBadge status={audit.status} />
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/audits/${id}/history`}>
+              <History className="size-4" aria-hidden />
+              {t.viewHistory}
+            </Link>
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href={`/audits/${id}/report`}>
               <FileText className="size-4" aria-hidden />

@@ -33,8 +33,8 @@ Storage), cola de trabajos con BullMQ + Redis.
 ├── src/                    Backend Express
 │   ├── routes/              Un archivo por recurso (audits, assets, evidences, ...)
 │   ├── middlewares/          auth (JWT + RBAC + platform admin), validación, errores
-│   ├── services/              coverageEngine, riskScoring, pdfReport, fileValidation, ...
-│   ├── jobs/                   scanQueue (productor) y scanWorker (consumidor)
+│   ├── services/              coverageEngine, riskScoring, pdfReport, fileValidation, costEngine, auditLogger, dataRetentionEngine, ...
+│   ├── jobs/                   scanQueue/scanWorker y retentionQueue/retentionWorker (productor/consumidor)
 │   └── config/                  env.ts (valida .env con zod), supabase.ts, redis.ts
 ├── db/
 │   ├── schema.sql              Esquema inicial (tablas + RLS)
@@ -123,6 +123,7 @@ URLs de Supabase.
 | `npm run build` / `npm start` | Build de producción + arranque |
 | `npm run typecheck` | Solo chequeo de tipos |
 | `npm run worker:scan` | Worker que consume la cola de escaneos |
+| `npm run worker:retention` | Worker que purga evidencias vencidas (corre diario vía BullMQ Job Scheduler; también se puede disparar manual con `POST /admin/retention/run-now`) |
 | `npm run db:migrate` | Aplica `schema.sql` + migraciones pendientes |
 | `npm run storage:setup` | Crea los buckets de Storage si no existen |
 | `npm run admin:promote -- email` | Otorga `platform_admin` a un usuario ya registrado |
@@ -185,6 +186,33 @@ URLs de Supabase.
   escaneo) además del rate limit general.
 - Ningún endpoint permite auto-otorgarse organización, rol o `platform_admin`.
 
+### Compliance, trazabilidad y retención (GDPR / ISO 27001)
+- **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
+  evidencias, cambios de estado de hallazgos, generación/descarga de
+  reportes, cambios de rol y de organización, y purgas por retención — con
+  actor, IP, user-agent y payload antes/después. RLS habilita solo
+  `INSERT`/`SELECT`; sin policy de `UPDATE`/`DELETE`, esas operaciones quedan
+  bloqueadas para cualquier rol sujeto a RLS (verificado: un intento de
+  `UPDATE`/`DELETE` desde un cliente autenticado normal afecta 0 filas, sin
+  error). `organization_id` usa `on delete set null` (no cascade) para que el
+  historial sobreviva al borrado de la organización que lo generó. Vistas:
+  `/audits/:id/history` (una auditoría) y `/admin/audit-logs` (toda la
+  plataforma, solo platform admin).
+- **Retención y purga de evidencias**: cada organización configura
+  `retention_period_days` en `/settings/retention` (solo `ciso` o platform
+  admin). Un worker de BullMQ (`worker:retention`) corre una pasada diaria
+  vía Job Scheduler que borra el binario en Storage de las evidencias
+  vencidas y marca la fila como `is_purged = true` — la fila y su metadata
+  (quién subió, cuándo) se conservan para fines legales, solo se elimina el
+  archivo. `POST /admin/retention/run-now` dispara una pasada inmediata sin
+  esperar al schedule diario.
+- **Falsos positivos / riesgo aceptado**: `PATCH /findings/:id/status` exige
+  `justification_notes` (mín. 10 caracteres); `reviewed_by` se toma del
+  usuario autenticado, nunca del body. Los hallazgos en `false_positive` o
+  `accepted_risk` se excluyen del cálculo de puntaje de riesgo
+  (`GET /audits/:id/report`) pero siguen apareciendo en el reporte con su
+  justificación, para dejar constancia de la decisión.
+
 ---
 
 ## API — endpoints principales
@@ -213,6 +241,15 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/admin/organizations/:id/members` | *(platform admin)* Usuarios de una organización |
 | GET | `/admin/organizations/:id/activity` | *(platform admin)* Actividad reciente |
 | POST | `/admin/users/role` | *(platform admin)* Cambia rol y/o `platform_admin` de un usuario |
+| GET | `/admin/costs/summary` | *(platform admin)* Costo total estimado del mes, desglosado por servicio |
+| GET | `/admin/costs/breakdown` | *(platform admin)* Serie diaria de costo por servicio + costo por organización (`?from=&to=` ISO) |
+| GET | `/admin/costs/audits` | *(platform admin)* Auditorías ordenadas por costo total (`?limit=&from=&to=`) |
+| GET / PATCH | `/admin/costs/pricing` | *(platform admin)* Lee / actualiza las tarifas unitarias por proveedor |
+| GET | `/audits/:id/history` | Timeline de audit logs de una auditoría (evidencias, hallazgos, reportes) |
+| GET | `/admin/audit-logs` | *(platform admin)* Audit logs de toda la plataforma (`?organizationId=&action=&limit=`) |
+| PATCH | `/findings/:id/status` | Cambia estado de un hallazgo a `open`/`false_positive`/`accepted_risk` con justificación obligatoria |
+| GET / PATCH | `/settings/retention` | Lee / actualiza `retention_period_days` de la propia organización *(PATCH solo `ciso`)* |
+| POST | `/admin/retention/run-now` | *(platform admin)* Dispara una pasada de purga inmediata |
 
 ---
 
@@ -228,6 +265,10 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) |
 | `/audits/[id]/report` | Hallazgos filtrables por severidad + descarga de PDF |
 | `/admin` | *(solo platform admin)* Métricas de plataforma, gestión de organizaciones, roles y actividad |
+| `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas |
+| `/audits/[id]/history` | Línea de tiempo de audit logs de esa auditoría (evidencias, hallazgos, reportes) |
+| `/admin/audit-logs` | *(solo platform admin)* Audit logs de toda la plataforma, filtrables por organización/acción |
+| `/settings/retention` | *(`ciso` o platform admin)* Configura días de retención de evidencias y ve estadísticas de purga |
 
 Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 `localStorage`.
@@ -242,12 +283,32 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 - El worker de escaneo requiere `nmap` instalado donde corra; si no está, la
   auditoría queda en `failed` (no se inventan resultados). Los chequeos de
   TLS/cabeceras HTTP no dependen de nmap.
-- El "log de actividad" de `/admin` es una vista basada en los `created_at`
-  ya existentes (últimas auditorías/activos/evidencias), no un log de
-  auditoría exhaustivo con cada escritura instrumentada.
+- El "log de actividad" que se ve al abrir el detalle de una organización en
+  `/admin` sigue siendo una vista liviana basada en `created_at` (últimas
+  auditorías/activos/evidencias) — es distinto del audit log real e
+  inmutable (`audit_logs`, ver `/admin/audit-logs` y `/audits/[id]/history`),
+  que sí instrumenta cada escritura relevante con actor/IP/payload.
 - La estimación de almacenamiento en `/admin` suma `audit_evidences.size_bytes`
   (ya se guarda por evidencia); no consulta la Management API de Supabase.
 - La suite de tests (`npm test`) necesita un proyecto Supabase **de test**
   separado — no se puede correr sin esa infraestructura.
 - No hay flujo de "cambiar contraseña" ni "invitar a un compañero de equipo"
   todavía (solo el primer usuario/`ciso` por organización vía onboarding).
+- El panel FinOps (`/admin/costs`) calcula costos **estimados**, no reales:
+  no hay integración con las APIs de facturación de Supabase/Upstash/el
+  hosting (requerirían tokens de Management API distintos al service_role).
+  Storage, escaneos (`scan_runs`, agregada para esto), reportes y miembros
+  se miden con datos reales del sistema; el costo de hosting no tiene una
+  métrica real disponible y se modela como un costo fijo mensual prorrateado
+  por actividad. Las tarifas unitarias (denominadas en USD, como facturan
+  los proveedores) son editables desde la propia UI, igual que el tipo de
+  cambio USD→CLP usado para mostrar todo el panel en pesos chilenos
+  (fila `fx_usd_clp`, valor semilla 950 — hay que ajustarla al tipo de
+  cambio real).
+- El worker de retención (`worker:retention`) corre como proceso aparte del
+  API (igual que `worker:scan`); en producción hace falta levantarlo por
+  separado (o migrar a un cron real del hosting) para que la purga diaria
+  realmente se ejecute.
+- La UI de gestión de riesgo (`/audits/[id]/report`) solo expone las
+  transiciones `false_positive`/`accepted_risk`/volver a `open`; el estado
+  `remediated` existe en el esquema pero no tiene flujo propio todavía.

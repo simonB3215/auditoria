@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "worker:scan": "tsx watch src/jobs/scanWorker.ts",
+    "worker:retention": "tsx watch src/jobs/retentionWorker.ts",
     "db:migrate": "tsx db/run-migrations.ts",
     "admin:promote": "tsx db/promote-admin.ts",
     "storage:setup": "tsx db/setup-storage.ts",
