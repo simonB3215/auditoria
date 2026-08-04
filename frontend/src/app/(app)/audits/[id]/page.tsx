@@ -2,10 +2,11 @@
 
 import { useEffect, useState, use as usePromise } from "react";
 import Link from "next/link";
-import { ArrowLeft, FileText, History } from "lucide-react";
+import { ArrowLeft, FileText, History, Loader2, ScanSearch } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Audit, ComplianceRequirement, EvidenceListResponse, EvidenceUploadResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
+import { useProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -18,12 +19,18 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
   const { id } = usePromise(params);
   const { dict } = useI18n();
   const t = dict.auditDetail;
+  const { profile } = useProfile();
+  const canWrite = profile?.role === "ciso" || profile?.role === "auditor" || profile?.role === "auditor_guest";
+  const isExpiredGuest = profile?.role === "viewer" && Boolean(profile.expiresAt);
 
   const [audit, setAudit] = useState<Audit | null>(null);
   const [requirements, setRequirements] = useState<ComplianceRequirement[]>([]);
   const [coverage, setCoverage] = useState<EvidenceListResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [scanning, setScanning] = useState(false);
+  const [scanNotice, setScanNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   function loadAll() {
     setLoading(true);
@@ -48,6 +55,27 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  async function handleRunScan() {
+    if (!canWrite) {
+      setScanNotice({
+        kind: "error",
+        message: isExpiredGuest ? dict.guestPilot.expiredMessage : dict.guestPilot.scanFailed,
+      });
+      return;
+    }
+    setScanning(true);
+    setScanNotice(null);
+    try {
+      await api.post(`/api/v1/audits/${id}/run-scan`, {});
+      setScanNotice({ kind: "success", message: dict.guestPilot.scanQueued });
+      loadAll();
+    } catch (err) {
+      setScanNotice({ kind: "error", message: getApiErrorMessage(err, dict.guestPilot.scanFailed) });
+    } finally {
+      setScanning(false);
+    }
+  }
 
   function handleUploaded(result: EvidenceUploadResponse) {
     setCoverage((prev) => ({
@@ -98,6 +126,16 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
               {t.viewHistory}
             </Link>
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={!canWrite ? "opacity-50" : undefined}
+            onClick={handleRunScan}
+            disabled={scanning}
+          >
+            {scanning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ScanSearch className="size-4" aria-hidden />}
+            {scanning ? dict.guestPilot.runningScan : dict.guestPilot.runScan}
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href={`/audits/${id}/report`}>
               <FileText className="size-4" aria-hidden />
@@ -106,6 +144,12 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
           </Button>
         </div>
       </div>
+
+      {scanNotice && (
+        <Alert variant={scanNotice.kind === "error" ? "destructive" : "default"}>
+          <AlertDescription>{scanNotice.message}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -128,7 +172,14 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
             <CardTitle className="text-base">{t.uploadEvidence}</CardTitle>
           </CardHeader>
           <CardContent>
-            <EvidenceUpload auditId={id} requirements={requirements} onUploaded={handleUploaded} />
+            {isExpiredGuest ? (
+              <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 opacity-60">
+                <p className="text-sm font-medium">{dict.guestPilot.expiredTitle}</p>
+                <p className="text-sm text-muted-foreground">{dict.guestPilot.expiredMessage}</p>
+              </div>
+            ) : (
+              <EvidenceUpload auditId={id} requirements={requirements} onUploaded={handleUploaded} />
+            )}
           </CardContent>
         </Card>
       </div>

@@ -12,7 +12,7 @@ export const assetsRouter = Router();
 assetsRouter.post(
   "/assets",
   authenticateToken,
-  requireRole(["ciso", "auditor"]),
+  requireRole(["ciso", "auditor", "auditor_guest"]),
   asyncHandler(async (req, res) => {
     const body = assetInputSchema.parse(req.body);
     const profile = req.profile!;
@@ -133,7 +133,7 @@ assetsRouter.delete(
 assetsRouter.post(
   "/assets/:id/verify",
   authenticateToken,
-  requireRole(["ciso", "auditor"]),
+  requireRole(["ciso", "auditor", "auditor_guest"]),
   validateUuidParams("id"),
   asyncHandler(async (req, res) => {
     const profile = req.profile!;

@@ -1,10 +1,26 @@
-export type UserRole = "ciso" | "auditor" | "viewer";
+export type UserRole = "ciso" | "auditor" | "auditor_guest" | "viewer";
 
 export interface Profile {
   id: string;
   organizationId: string;
   role: UserRole;
   isPlatformAdmin: boolean;
+  /** Solo no-null para auditor_guest (Piloto Invitado) o un ex-guest ya degradado a viewer. */
+  expiresAt: string | null;
+}
+
+export interface InviteLink {
+  url: string;
+  email: string | null;
+  role: "auditor" | "auditor_guest";
+  temporaryAccessDays: number | null;
+  linkExpiresAt: string;
+}
+
+export interface InvitationPreview {
+  organizationName: string | null;
+  role: "auditor" | "auditor_guest";
+  email: string | null;
 }
 
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";

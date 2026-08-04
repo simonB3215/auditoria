@@ -34,7 +34,8 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   const { dict } = useI18n();
   const t = dict.report;
   const { profile } = useProfile();
-  const canReview = profile?.role === "ciso" || profile?.role === "auditor";
+  const canReview = profile?.role === "ciso" || profile?.role === "auditor" || profile?.role === "auditor_guest";
+  const isExpiredGuest = profile?.role === "viewer" && Boolean(profile.expiresAt);
 
   const SEVERITY_TABS: { value: FindingSeverity | "all"; label: string }[] = [
     { value: "all", label: t.severityAll },
@@ -58,6 +59,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   const [justification, setJustification] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [expiredNotice, setExpiredNotice] = useState(false);
 
   function loadFindings() {
     setLoading(true);
@@ -176,6 +178,14 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
         </Alert>
       )}
 
+      {expiredNotice && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            <strong>{dict.guestPilot.expiredTitle}.</strong> {dict.guestPilot.expiredMessage}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t.missingRequirements}</CardTitle>
@@ -220,7 +230,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                   <TableHead>{t.colFinding}</TableHead>
                   <TableHead>{t.colRemediation}</TableHead>
                   <TableHead>{t.colStatus}</TableHead>
-                  {canReview && <TableHead className="text-right">{t.colActions}</TableHead>}
+                  {(canReview || isExpiredGuest) && <TableHead className="text-right">{t.colActions}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -234,7 +244,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                     <TableCell>
                       <FindingStatusBadge status={finding.status} />
                     </TableCell>
-                    {canReview && (
+                    {canReview ? (
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -264,7 +274,13 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
-                    )}
+                    ) : isExpiredGuest ? (
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" className="opacity-50" onClick={() => setExpiredNotice(true)}>
+                          <MoreHorizontal className="size-4" aria-hidden />
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

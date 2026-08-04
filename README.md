@@ -147,7 +147,8 @@ URLs de Supabase.
   (no localmente), así que sigue funcionando sin cambios sin importar qué
   esquema de firma use el proyecto de Supabase.
 - **RBAC por organización**: `ciso` (dueño/máximo permiso) > `auditor` >
-  `viewer`, definido en `profiles.role`.
+  `viewer`, definido en `profiles.role`. `auditor_guest` ("Piloto Invitado")
+  es un quinto rol especial de solo 10 días — ver sección propia abajo.
 - **RLS multi-tenant**: cada tabla filtra por `organization_id` vía
   `current_organization_id()`, así que un usuario nunca ve datos de otra
   organización, ni aunque el backend tuviera un bug — la base de datos misma
@@ -185,6 +186,43 @@ URLs de Supabase.
 - Rate limiting específico en acciones sensibles (subir evidencia, lanzar
   escaneo) además del rate limit general.
 - Ningún endpoint permite auto-otorgarse organización, rol o `platform_admin`.
+
+### Piloto Invitado (10 días)
+- Un **platform admin** genera un link desde `/settings/team` (restringido
+  a `requirePlatformAdmin`, no a cualquier `ciso`: dar de alta acceso a una
+  organización se trata con el mismo nivel de privilegio que el resto de
+  `/admin/*`), marcando "Acceso Temporal (10 Días)". El **email es
+  opcional** — no hace falta saber de antemano quién va a usar el link, ni
+  depender de que le llegue un correo: el token (`invite_links.id`, UUID no
+  adivinable, un solo uso, vence en 7 días si nadie lo usa) alcanza para
+  unirse desde `/register?invite=<token>`, donde la persona se registra con
+  el email y contraseña que quiera — no tiene que coincidir con ningún
+  email que el admin haya escrito. La organización y el rol de destino se
+  resuelven del lado del servidor contra `invite_links` al aceptar (nunca
+  se confía en lo que diga el cliente); recién ahí se crea el `profiles` y
+  se cuentan los 10 días — un link sin usar no gasta días de prueba.
+- **Degradación autónoma**: no depende de un job para bajar de nivel. En
+  cuanto `expires_at` vence, la siguiente request autenticada de ese
+  usuario lo baja a `viewer` en el momento (`authenticateToken`), antes de
+  seguir procesando esa misma request. La policy de RLS que exige
+  `expires_at > now()` para escribir es la red de seguridad para la
+  ventana entre que expira y esa próxima request.
+- **Cuotas FinOps del trial**: máximo 3 escaneos y 100MB de almacenamiento
+  por organización durante los 10 días (no por usuario), devuelto como 403
+  si se supera — ver `POST /audits/:id/run-scan` y
+  `POST /audits/:id/evidences`.
+- **UI**: badge en el topbar con los días restantes mientras está activo;
+  al expirar, "Cargar evidencia", "Ejecutar escaneo" y las acciones sobre
+  hallazgos quedan visualmente deshabilitadas con un aviso puntual para
+  actualizar a Plan Pro, en vez de simplemente desaparecer.
+- **Secuencia de nurturing (día 1/7/10)**: las 3 plantillas de email están
+  preparadas como funciones puras en `src/services/emailTemplates.ts`
+  (asunto + texto + HTML reales, con los datos de cobertura/días
+  restantes), pero **no hay envío real conectado** — sin
+  `RESEND_API_KEY`, el contenido queda en el log del servidor en vez de
+  salir por correo. El email de bienvenida (día 1) ya está enganchado a
+  `POST /onboarding/accept-invitation` como demostración del punto de
+  integración.
 
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
@@ -250,6 +288,9 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | PATCH | `/findings/:id/status` | Cambia estado de un hallazgo a `open`/`false_positive`/`accepted_risk` con justificación obligatoria |
 | GET / PATCH | `/settings/retention` | Lee / actualiza `retention_period_days` de la propia organización *(PATCH solo `ciso`)* |
 | POST | `/admin/retention/run-now` | *(platform admin)* Dispara una pasada de purga inmediata |
+| POST | `/invitations` | *(platform admin)* Genera un link de invitación de un solo uso (`{ email?, temporaryAccess }`, email opcional) |
+| GET | `/invitations/:token` | *(público, sin auth)* Preview de un link de invitación — organización y rol, para mostrar antes de registrarse |
+| POST | `/onboarding/accept-invitation` | Crea el `profiles` de quien acepta un link (`{ token, fullName }`) — organización/rol vienen del token, no del body |
 
 ---
 
@@ -258,12 +299,13 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | Ruta | Qué hace |
 |---|---|
 | `/login`, `/register` | Auth (email/password + Google) |
-| `/onboarding` | Paso final de registro (crear organización) si todavía no existe el perfil |
+| `/onboarding` | Paso final de registro (crear organización), o aceptar una invitación existente si el usuario fue invitado |
 | `/dashboard` | Métricas, distribución de riesgos, alta rápida de auditorías |
 | `/assets` | Gestión de activos: tabla con filtros, alta/edición, verificación, borrado |
 | `/audits/new` | Creación de auditoría con selección múltiple de activos |
-| `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) |
-| `/audits/[id]/report` | Hallazgos filtrables por severidad + descarga de PDF |
+| `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) + disparo manual de escaneo |
+| `/audits/[id]/report` | Hallazgos filtrables por severidad, acciones de falso positivo/riesgo aceptado, descarga de PDF |
+| `/settings/team` | *(platform admin)* Genera links de invitación (copiar/compartir), permanentes o Piloto Invitado (10 días) |
 | `/admin` | *(solo platform admin)* Métricas de plataforma, gestión de organizaciones, roles y actividad |
 | `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas |
 | `/audits/[id]/history` | Línea de tiempo de audit logs de esa auditoría (evidencias, hallazgos, reportes) |
@@ -277,9 +319,6 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 
 ## Limitaciones conocidas / próximos pasos
 
-- No hay pantalla de frontend para lanzar escaneos manualmente desde
-  `/audits/[id]` (el endpoint `POST /audits/:id/run-scan` existe, falta el
-  botón) — la creación de la auditoría con activos sí está resuelta.
 - El worker de escaneo requiere `nmap` instalado donde corra; si no está, la
   auditoría queda en `failed` (no se inventan resultados). Los chequeos de
   TLS/cabeceras HTTP no dependen de nmap.
@@ -292,8 +331,9 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   (ya se guarda por evidencia); no consulta la Management API de Supabase.
 - La suite de tests (`npm test`) necesita un proyecto Supabase **de test**
   separado — no se puede correr sin esa infraestructura.
-- No hay flujo de "cambiar contraseña" ni "invitar a un compañero de equipo"
-  todavía (solo el primer usuario/`ciso` por organización vía onboarding).
+- No hay flujo de "cambiar contraseña" todavía. Invitar sí está resuelto
+  (`/settings/team`), permanente o como Piloto Invitado de 10 días — pero
+  solo un platform admin puede invitar, no cualquier `ciso`.
 - El panel FinOps (`/admin/costs`) calcula costos **estimados**, no reales:
   no hay integración con las APIs de facturación de Supabase/Upstash/el
   hosting (requerirían tokens de Management API distintos al service_role).
@@ -312,3 +352,13 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 - La UI de gestión de riesgo (`/audits/[id]/report`) solo expone las
   transiciones `false_positive`/`accepted_risk`/volver a `open`; el estado
   `remediated` existe en el esquema pero no tiene flujo propio todavía.
+- El botón "Ejecutar escaneo" de `/audits/[id]` reutiliza `POST
+  /audits/:id/run-scan` sin pasar `asset_ids`: escanea todos los activos
+  verificados de la organización, no solo los vinculados a esa auditoría
+  puntual (comportamiento heredado del endpoint, no nuevo de este botón).
+- La cuota de 3 escaneos del Piloto Invitado cuenta `scan_runs` (escaneos
+  ya *completados*), no requests en curso: varias llamadas a
+  `POST /run-scan` disparadas antes de que la primera termine podrían
+  encolarse por encima de 3 en una ventana muy angosta. No aplica a la
+  cuota de storage, que sí se valida contra el tamaño acumulado real antes
+  de aceptar cada subida.

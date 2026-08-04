@@ -1,61 +1,62 @@
-# PROMPT: MÓDULO DE COMPLIANCE, TRAZABILIDAD Y RETENCIÓN DE DATOS (FASE ENTERPRISE)
+# PROMPT DE IMPLEMENTACIÓN: ROL Y FLUJO "PILOTO INVITADO (10 DÍAS)"
 
-> **Instrucciones para la IA ejecutora:** Actúa como un Arquitecto de Software Senior y Especialista en Ciberseguridad/Compliance. Tu objetivo es implementar 3 características críticas de seguridad y cumplimiento normativo (ISO 27001, GDPR) dentro de la plataforma existente (Next.js 16, Express, Supabase RLS y PostgreSQL).
-
----
-
-## 🛠️ MÓDULOS A IMPLEMENTAR
-
-### 1. Sistema de Logs de Auditoría Inmutables (Audit Logs & Trazabilidad ISO 27001)
-
-#### A. Base de Datos & RLS:
-- Crear la tabla `audit_logs` en PostgreSQL con los campos: `id`, `organization_id`, `actor_id` (quién ejecutó la acción), `action` (ej: `EVIDENCE_APPROVED`, `FINDING_CRITICALITY_CHANGED`, `REPORT_DOWNLOADED`), `resource_type`, `resource_id`, `payload_before`, `payload_after`, `ip_address`, `user_agent`, `created_at`.
-- **Política RLS Inmutable:** Habilitar RLS permitiendo solo operaciones `INSERT` y `SELECT`. Bloquear estrictamente operaciones `UPDATE` y `DELETE` en la tabla `audit_logs` para asegurar que el historial sea inalterable.
-
-#### B. Middlewares e Interceptores Backend:
-- Crear un servicio global `AuditLogger` que registre automáticamente en la BD cuando ocurran los siguientes eventos:
-  1. Aprobación, rechazo o subida de evidencias.
-  2. Modificación de la criticidad o sugerencia de un hallazgo.
-  3. Generación y descarga de reportes ejecutivos PDF.
-  4. Cambios en roles de usuarios o configuraciones de organización.
-
-#### C. Frontend (`/audits/[id]/history` y `/admin/audit-logs`):
-- Crear una pestaña o modal de "Historial de Cambios" dentro de cada auditoría para ver la línea de tiempo (*timeline*) de acciones ejecutadas por los usuarios con fecha, hora, IP y usuario responsable.
+> **Instrucciones para la IA ejecutora:** Actúa como un Lead Full-Stack Software Engineer & Software Architect (Next.js, Express, Supabase PostgreSQL, RLS, Tailwind CSS). Implementa la función de "Piloto Invitado (10 Días)" en Aegis CyberAudit siguiendo rigurosamente el siguiente pliego de especificaciones técnicas, de seguridad y FinOps.
 
 ---
 
-### 2. Políticas de Retención y Purga Automatizada de Datos (Data Retention / GDPR)
-
-#### A. Configuración de Políticas de Retención (Backend / BD):
-- Agregar el campo `retention_period_days` (ej. 30, 90, 365 días) en la tabla `organizations` o configuraciones de auditoría.
-- Crear una función almacenada en PostgreSQL o un script de tarea programada (Cron Job / Worker de BullMQ) llamado `DataRetentionEngine`.
-
-#### B. Motor de Purga Autónoma:
-- El motor debe identificar registros y archivos de evidencias en Supabase Storage cuya antigüedad supere el periodo de retención configurado para la organización.
-- Borrado seguro de archivos en Supabase Storage y marcado del estado del registro a `purged` en la BD (manteniendo el metadato del log para fines legales, pero eliminando el binario/documento sensible para cumplir con GDPR y privacidad).
-
-#### C. Frontend (`/settings/retention`):
-- Permitir a los usuarios con rol `ciso` o `admin` configurar el tiempo de vida máximo de sus evidencias subidas y ver el estado de almacenamiento/purga programada.
+## 🎯 OBJETIVO DE LA TAREA
+Habilitar un mecanismo de prueba B2B temporal de 10 días para usuarios invitados por administradores/CISOs, garantizando aislamiento multi-tenant por RLS, inmutabilidad de logs, degradación autónoma de permisos a `viewer` y límites estrictos de cómputo/almacenamiento.
 
 ---
 
-### 3. Gestión de Falsos Positivos y Riesgos Aceptados (Risk Management)
+## 🛠️ ESPECIFICACIONES TÉCNICAS Y REQUISITOS
 
-#### A. API Backend:
-- Endpoint `PATCH /api/v1/findings/:id/status` que permita cambiar el estado de un hallazgo a: `active`, `false_positive`, o `risk_accepted`.
-- Requerir obligatoriamente los campos: `justification_notes` (texto explicativo de la razón técnica) y `reviewed_by` (ID del auditor que lo autoriza).
-- **Ajuste del Motor de Scoring:** Excluir automáticamente los hallazgos marcados como `false_positive` o `risk_accepted` del cálculo de la penalización del puntaje global de riesgo de la auditoría.
-
-#### B. Frontend (`/audits/[id]/report`):
-- En la tabla de hallazgos del reporte, agregar un menú de acción por cada vulnerabilidad: *"Marcar como Falso Positivo"* / *"Aceptar Riesgo"*.
-- Modal de justificación técnica antes de confirmar la acción.
-- Distinción visual con Badges de estado (ej: badge gris con ícono para "Falso Positivo" y badge amarillo con ícono para "Riesgo Aceptado").
+### 1. 🗄️ BASE DE DATOS & RLS (Supabase PostgreSQL)
+* **Tabla `organization_members`:**
+  * Añadir/Asegurar la columna `expires_at` (TIMESTAMP WITH TIME ZONE).
+  * Crear o actualizar el Enum de roles para incluir: `'ciso'`, `'auditor'`, `'auditor_guest'`, `'viewer'`.
+* **Lógica de Expiración Autónoma:**
+  * Implementar una función en PostgreSQL o una regla dentro del Worker diario que evalúe si `NOW() > expires_at` para usuarios con rol `auditor_guest`.
+  * Al expirar, cambiar automáticamente el rol a `'viewer'`.
+* **Políticas RLS:**
+  * El rol `auditor_guest` debe estar filtrado estrictamente por `organization_id` (aislamiento multi-tenant).
+  * `auditor_guest` tiene permisos de ESCRITURA condicionados a que `expires_at > NOW()`.
+* **Inmutabilidad & Trazabilidad (ISO 27001 / GDPR):**
+  * Toda acción (escaneos, carga de evidencias, cambios) debe insertar una fila inmutable en `audit_logs` registrando: `user_id`, `organization_id`, `action`, `ip_address`, `user_agent` y `timestamp`.
+  * La tabla `audit_logs` debe mantener bloqueados los comandos `UPDATE` y `DELETE` para todos los roles.
 
 ---
 
-## 📄 ENTREGABLES REQUERIDOS
+### 2. ⚡ FINOPS & LIMITES DE USO (Lógica Backend / API)
+* **Límite de Escaneos (Nmap / TLS / Headers):**
+  * Imponer una cuota de **máximo 3 escaneos activos** por organización durante todo el periodo de trial de 10 días para el rol `auditor_guest`.
+  * Endpoint `POST /audits/:id/run-scan` debe validar esta cuota antes de encolar en Redis/BullMQ.
+* **Límite de Almacenamiento (Supabase Storage):**
+  * Validar en el endpoint de subida de evidencias que el total consumido por la organización en trial no supere **100 MB**.
 
-1. Migration SQL para la tabla `audit_logs` con sus políticas de inmutabilidad (solo `INSERT`/`SELECT`) y campos de justificación en `findings`.
-2. Código fuente del servicio `AuditLogger` y middlewares asociados en Express.
-3. Worker/Cron Job para el motor de retención y purga segura de archivos en Supabase Storage.
-4. Componentes y modales actualizados en la UI de Next.js (`/audits/[id]` y vista de reportes).
+---
+
+### 3. 🎨 INTERFAZ DE USUARIO & UX (Next.js / Tailwind CSS)
+* **Modal / Flujo de Invitación:**
+  * Permitir al usuario con rol `ciso` invitar a un consultor mediante email, marcando la casilla *"Acceso Temporal (10 Días)"*.
+  * Generar un enlace mágico / token JWT de un solo uso para acceso directo sin fricciones.
+* **Badge y Banner de Sesión:**
+  * Si la sesión actual pertenece a un `auditor_guest`, desplegar en el Topbar un badge dinámico con el contador: `Rol: Piloto Invitado (X días restantes)`.
+* **Estado Expirado (Degradación en UI):**
+  * Cuando el trial caduque y el rol sea `viewer`, deshabilitar visualmente los botones de acción crítica (*"Cargar Evidencia"*, *"Ejecutar Escaneo"*, *"Modificar Estado"*).
+  * Mostrar una alerta contextual al intentar hacer clic: *"El periodo de prueba de 10 días ha finalizado. Actualiza a Plan Pro para reactivar permisos de escritura y escaneo."*
+
+---
+
+### 4. 📧 SECUENCIA DE EMAIL NURTURING (Resend / SMTP)
+Configurar o preparar las plantillas para los siguientes 3 eventos de correo:
+1. **Día 1 (Bienvenida):** Enlace de acceso y Call-to-Action para ejecutar el primer escaneo/evidencia.
+2. **Día 7 (Progreso):** Reporte de avance (% de cobertura ISO/Ley 21.663) y recordatorio de 3 días restantes.
+3. **Día 10 (Expiración):** Notificación de degradación a lectura y CTA para actualizar a Plan Pro ($149 USD/mes).
+
+---
+
+## 📌 ENTREGABLES
+1. Scripts SQL / Migraciones de Supabase (tablas, RLS, funciones/triggers de expiración).
+2. Endpoints actualizados con controles de cuota FinOps (escaneos y storage).
+3. Componentes UI en Next.js (Modal de invitación, Topbar Badge, deshabilitación de acciones).
