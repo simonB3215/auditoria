@@ -1,7 +1,19 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { connect as tlsConnect } from "node:tls";
 
 const execFileAsync = promisify(execFile);
+
+const CHECK_TIMEOUT_MS = 8000;
+const HTTPS_PORTS = new Set([443, 8443]);
+const HTTP_LIKE_PORTS = new Set([80, 443, 8080, 8443]);
+const WEAK_TLS_PROTOCOLS = new Set(["TLSv1", "TLSv1.1", "SSLv3"]);
+const REQUIRED_SECURITY_HEADERS = [
+  "strict-transport-security",
+  "x-content-type-options",
+  "x-frame-options",
+  "content-security-policy",
+];
 
 export interface OpenPort {
   port: number;
@@ -45,6 +57,107 @@ export async function runNmapScan(target: string): Promise<ScanEngineResult> {
     }
     return { ok: false, reason: "scan_failed", detail: nodeErr.message ?? "Error desconocido ejecutando nmap" };
   }
+}
+
+export interface TlsCertFinding {
+  kind: "expired_cert" | "expiring_soon_cert" | "weak_protocol" | "untrusted_cert";
+  detail: string;
+}
+
+/**
+ * Conecta por TLS y revisa el certificado del peer: vencimiento (o por
+ * vencer en <30 días), si la cadena es de confianza, y si el protocolo
+ * negociado es una versión débil (TLSv1/1.1/SSLv3). Timeout estricto para
+ * no colgar el worker si el host no responde.
+ */
+export async function checkTlsCertificate(host: string, port: number): Promise<TlsCertFinding[]> {
+  return new Promise((resolve) => {
+    const findings: TlsCertFinding[] = [];
+    let settled = false;
+
+    const socket = tlsConnect({ host, port, servername: host, timeout: CHECK_TIMEOUT_MS, rejectUnauthorized: false });
+
+    function finish(result: TlsCertFinding[]) {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    }
+
+    socket.on("timeout", () => finish([]));
+    socket.on("error", () => finish([])); // host sin TLS en ese puerto, o inalcanzable: no es un finding en sí
+
+    socket.on("secureConnect", () => {
+      const cert = socket.getPeerCertificate();
+      const protocol = socket.getProtocol();
+
+      if (protocol && WEAK_TLS_PROTOCOLS.has(protocol)) {
+        findings.push({ kind: "weak_protocol", detail: `Protocolo TLS débil negociado: ${protocol}` });
+      }
+
+      if (!socket.authorized) {
+        findings.push({
+          kind: "untrusted_cert",
+          detail: `Certificado no confiable: ${socket.authorizationError ?? "razón desconocida"}`,
+        });
+      }
+
+      if (cert && cert.valid_to) {
+        const validTo = new Date(cert.valid_to);
+        const daysLeft = (validTo.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        if (daysLeft < 0) {
+          findings.push({ kind: "expired_cert", detail: `Certificado vencido desde ${cert.valid_to}` });
+        } else if (daysLeft < 30) {
+          findings.push({
+            kind: "expiring_soon_cert",
+            detail: `Certificado vence en ${Math.floor(daysLeft)} día(s) (${cert.valid_to})`,
+          });
+        }
+      }
+
+      finish(findings);
+    });
+  });
+}
+
+export interface HeaderFinding {
+  header: string;
+}
+
+/**
+ * Pide "/" por HTTP(S) y revisa qué cabeceras de seguridad estándar faltan.
+ * Timeout estricto vía AbortController.
+ */
+export async function checkSecurityHeaders(
+  host: string,
+  port: number,
+  useHttps: boolean
+): Promise<HeaderFinding[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+  const url = `${useHttps ? "https" : "http"}://${host}:${port}/`;
+
+  try {
+    // Nota: si el host usa un certificado self-signed/no confiable, este
+    // fetch() falla (Node valida la cadena por defecto) y el catch de abajo
+    // devuelve "sin findings" en vez de reportar cabeceras faltantes —
+    // limitación conocida; ese caso ya queda cubierto por el finding
+    // "untrusted_cert" de checkTlsCertificate.
+    const res = await fetch(url, { signal: controller.signal, redirect: "manual" });
+    return REQUIRED_SECURITY_HEADERS.filter((h) => !res.headers.has(h)).map((header) => ({ header }));
+  } catch {
+    return []; // host no responde HTTP en ese puerto: no es un finding de cabeceras
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export function isHttpsPort(port: number): boolean {
+  return HTTPS_PORTS.has(port);
+}
+
+export function isHttpLikePort(port: number): boolean {
+  return HTTP_LIKE_PORTS.has(port);
 }
 
 /** Parsea la salida "grepable" de nmap (-oG -). */

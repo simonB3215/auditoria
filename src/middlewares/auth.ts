@@ -48,12 +48,20 @@ export async function authenticateToken(
 
   const { data: profile, error } = await supabaseAdmin
     .from("profiles")
-    .select("id, organization_id, role, is_platform_admin")
+    .select("id, organization_id, role, is_platform_admin, organizations(is_suspended)")
     .eq("id", verified.userId)
     .single();
 
   if (error || !profile) {
     res.status(401).json({ error: { code: "PROFILE_NOT_FOUND", message: "No existe un perfil para este usuario" } });
+    return;
+  }
+
+  const organization = Array.isArray(profile.organizations) ? profile.organizations[0] : profile.organizations;
+  if (organization?.is_suspended && !profile.is_platform_admin) {
+    res.status(403).json({
+      error: { code: "ORGANIZATION_SUSPENDED", message: "Tu organización fue suspendida. Contactá al administrador." },
+    });
     return;
   }
 

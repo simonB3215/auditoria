@@ -1,4 +1,4 @@
-import type { OpenPort } from "../jobs/scanEngine.js";
+import type { OpenPort, TlsCertFinding, HeaderFinding } from "../jobs/scanEngine.js";
 
 export type FindingSeverity = "critical" | "high" | "medium" | "low";
 
@@ -58,4 +58,62 @@ export function normalizeOpenPorts(
       remediation: classification.remediation,
     };
   });
+}
+
+const TLS_SEVERITY: Record<TlsCertFinding["kind"], FindingSeverity> = {
+  expired_cert: "critical",
+  untrusted_cert: "high",
+  weak_protocol: "high",
+  expiring_soon_cert: "medium",
+};
+
+const TLS_TITLE: Record<TlsCertFinding["kind"], string> = {
+  expired_cert: "Certificado TLS vencido",
+  untrusted_cert: "Certificado TLS no confiable",
+  weak_protocol: "Protocolo TLS débil habilitado",
+  expiring_soon_cert: "Certificado TLS por vencer",
+};
+
+const TLS_REMEDIATION: Record<TlsCertFinding["kind"], string> = {
+  expired_cert: "Renovar el certificado TLS inmediatamente.",
+  untrusted_cert: "Instalar un certificado emitido por una CA reconocida (evitar self-signed en producción).",
+  weak_protocol: "Deshabilitar TLSv1/TLSv1.1/SSLv3 en el servidor; exigir TLSv1.2 o superior.",
+  expiring_soon_cert: "Renovar el certificado antes de que venza; considerar renovación automática.",
+};
+
+export function normalizeTlsFindings(
+  auditId: string,
+  assetId: string,
+  assetValue: string,
+  port: number,
+  findings: TlsCertFinding[]
+): NormalizedFinding[] {
+  return findings.map((f) => ({
+    audit_id: auditId,
+    asset_id: assetId,
+    source_engine: "tls-check",
+    title: `${TLS_TITLE[f.kind]} en ${assetValue}:${port}`,
+    severity: TLS_SEVERITY[f.kind],
+    detail: f.detail,
+    remediation: TLS_REMEDIATION[f.kind],
+  }));
+}
+
+export function normalizeHeaderFindings(
+  auditId: string,
+  assetId: string,
+  assetValue: string,
+  port: number,
+  useHttps: boolean,
+  findings: HeaderFinding[]
+): NormalizedFinding[] {
+  return findings.map((f) => ({
+    audit_id: auditId,
+    asset_id: assetId,
+    source_engine: "http-headers",
+    title: `Cabecera de seguridad faltante (${f.header}) en ${assetValue}:${port}`,
+    severity: "low",
+    detail: `${useHttps ? "https" : "http"}://${assetValue}:${port}/ no incluye la cabecera "${f.header}".`,
+    remediation: `Agregar la cabecera "${f.header}" a las respuestas del servidor web.`,
+  }));
 }

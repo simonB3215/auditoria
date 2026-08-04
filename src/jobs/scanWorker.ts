@@ -2,8 +2,15 @@ import { Worker, type Job } from "bullmq";
 import { redisConnectionForWorker } from "../config/redis.js";
 import { supabaseAdmin } from "../config/supabase.js";
 import { SCAN_QUEUE_NAME, type ScanJobData } from "./scanQueue.js";
-import { runNmapScan } from "./scanEngine.js";
-import { normalizeOpenPorts, type NormalizedFinding } from "../services/findingsNormalization.js";
+import { runNmapScan, checkTlsCertificate, checkSecurityHeaders, isHttpsPort, isHttpLikePort } from "./scanEngine.js";
+import {
+  normalizeOpenPorts,
+  normalizeTlsFindings,
+  normalizeHeaderFindings,
+  type NormalizedFinding,
+} from "../services/findingsNormalization.js";
+
+const NETWORK_SCANNABLE_TYPES = new Set(["ip", "domain", "cidr"]);
 
 async function processScanJob(job: Job<ScanJobData>): Promise<void> {
   const { auditId, assets } = job.data;
@@ -12,14 +19,42 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
 
   const allFindings: NormalizedFinding[] = [];
   const failures: string[] = [];
+  const skipped: string[] = [];
 
   for (const asset of assets) {
+    // repository/cloud_server no son targets de un scan de red (nmap no
+    // aplica a una URL de git ni a un identificador de recurso cloud) — un
+    // motor de análisis distinto (secret scanning, cloud config audit)
+    // queda fuera del alcance de este MVP.
+    if (!NETWORK_SCANNABLE_TYPES.has(asset.assetType)) {
+      skipped.push(`${asset.assetValue} (tipo ${asset.assetType} no soportado por el motor de red actual)`);
+      continue;
+    }
+
     const result = await runNmapScan(asset.assetValue);
     if (!result.ok) {
       failures.push(`${asset.assetValue}: ${result.detail}`);
       continue;
     }
     allFindings.push(...normalizeOpenPorts(auditId, asset.assetId, asset.assetValue, result.openPorts));
+
+    // Chequeos de TLS/cabeceras solo tienen sentido contra un host puntual
+    // (ip/domain), no contra un rango CIDR completo.
+    if (asset.assetType === "cidr") continue;
+
+    for (const p of result.openPorts) {
+      if (isHttpsPort(p.port)) {
+        const tlsFindings = await checkTlsCertificate(asset.assetValue, p.port);
+        allFindings.push(...normalizeTlsFindings(auditId, asset.assetId, asset.assetValue, p.port, tlsFindings));
+      }
+      if (isHttpLikePort(p.port)) {
+        const useHttps = isHttpsPort(p.port);
+        const headerFindings = await checkSecurityHeaders(asset.assetValue, p.port, useHttps);
+        allFindings.push(
+          ...normalizeHeaderFindings(auditId, asset.assetId, asset.assetValue, p.port, useHttps, headerFindings)
+        );
+      }
+    }
   }
 
   if (allFindings.length > 0) {
@@ -30,10 +65,11 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
     }
   }
 
-  // Si TODOS los activos fallaron (ej. nmap no disponible), la auditoría
-  // se marca como failed en lugar de completed con cero hallazgos, para no
-  // dar una falsa sensación de "todo limpio".
-  const allFailed = failures.length === assets.length && assets.length > 0;
+  // Si TODOS los activos escaneables fallaron (ej. nmap no disponible), la
+  // auditoría se marca como failed en lugar de completed con cero
+  // hallazgos, para no dar una falsa sensación de "todo limpio".
+  const scannable = assets.filter((a) => NETWORK_SCANNABLE_TYPES.has(a.assetType));
+  const allFailed = scannable.length > 0 && failures.length === scannable.length;
   await supabaseAdmin
     .from("audits")
     .update({ status: allFailed ? "failed" : "completed" })
@@ -42,8 +78,11 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
   if (failures.length > 0) {
     console.error(`[scan-worker] audit=${auditId} fallos parciales:\n${failures.join("\n")}`);
   }
+  if (skipped.length > 0) {
+    console.log(`[scan-worker] audit=${auditId} activos omitidos:\n${skipped.join("\n")}`);
+  }
   console.log(
-    `[scan-worker] audit=${auditId} finalizado: ${allFindings.length} hallazgo(s), ${failures.length} activo(s) con error`
+    `[scan-worker] audit=${auditId} finalizado: ${allFindings.length} hallazgo(s), ${failures.length} activo(s) con error, ${skipped.length} omitido(s)`
   );
 }
 

@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
 import { useI18n } from "@/lib/i18n/context";
@@ -47,6 +47,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <LayoutDashboard className="size-4" aria-hidden />
               {t.dashboard}
             </Link>
+            <Link
+              href="/assets"
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              <Server className="size-4" aria-hidden />
+              {t.assets}
+            </Link>
+            {profile?.isPlatformAdmin && (
+              <Link
+                href="/admin"
+                className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+              >
+                <ShieldUser className="size-4" aria-hidden />
+                {t.admin}
+              </Link>
+            )}
 
             {loading ? (
               <Skeleton className="h-5 w-24" />

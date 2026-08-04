@@ -5,7 +5,7 @@ export const SCAN_QUEUE_NAME = "scan-jobs";
 
 export interface ScanTargetAsset {
   assetId: string;
-  assetType: "ip" | "cidr" | "domain";
+  assetType: "ip" | "cidr" | "domain" | "repository" | "cloud_server";
   assetValue: string;
 }
 

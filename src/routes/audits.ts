@@ -11,6 +11,7 @@ export const auditsRouter = Router();
 const createAuditSchema = z.object({
   title: z.string().trim().min(3).max(200),
   framework: z.enum(["iso27001", "nist_csf", "gdpr", "local_dp_law"]),
+  asset_ids: z.array(z.string().uuid()).max(200).optional(),
 });
 
 const updateAuditSchema = z
@@ -44,6 +45,18 @@ auditsRouter.post(
 
     if (error) {
       throw new AppError(400, "AUDIT_CREATE_FAILED", error.message);
+    }
+
+    if (body.asset_ids && body.asset_ids.length > 0) {
+      const links = body.asset_ids.map((assetId) => ({ audit_id: data.id, asset_id: assetId }));
+      // Si algún asset_id no pertenece a la organización, RLS lo descarta
+      // en silencio (no rompe la creación de la auditoría por eso).
+      const { error: linkError } = await supabase.from("audit_assets").upsert(links, {
+        onConflict: "audit_id,asset_id",
+      });
+      if (linkError) {
+        throw new AppError(400, "AUDIT_ASSETS_LINK_FAILED", linkError.message);
+      }
     }
 
     res.status(201).json({ data });

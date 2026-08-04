@@ -8,7 +8,7 @@ usersRouter.get(
   "/users/me",
   authenticateToken,
   asyncHandler(async (req, res) => {
-    const { id, organizationId, role } = req.profile!;
-    res.status(200).json({ data: { id, organizationId, role } });
+    const { id, organizationId, role, isPlatformAdmin } = req.profile!;
+    res.status(200).json({ data: { id, organizationId, role, isPlatformAdmin } });
   })
 );

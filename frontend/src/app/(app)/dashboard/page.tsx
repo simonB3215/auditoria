@@ -122,8 +122,11 @@ export default function DashboardPage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-base">{t.newAudit}</CardTitle>
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/audits/new">{t.newAuditWithAssets}</Link>
+            </Button>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreateAudit} className="flex flex-col gap-3">

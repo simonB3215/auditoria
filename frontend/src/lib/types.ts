@@ -4,6 +4,7 @@ export interface Profile {
   id: string;
   organizationId: string;
   role: UserRole;
+  isPlatformAdmin: boolean;
 }
 
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";
@@ -19,13 +20,16 @@ export interface Audit {
   updated_at?: string;
 }
 
-export type AssetType = "ip" | "cidr" | "domain";
+export type AssetType = "ip" | "cidr" | "domain" | "repository" | "cloud_server";
+export type AssetCriticality = "critica" | "alta" | "media" | "baja";
 export type AssetVerificationStatus = "pending" | "verified";
 
 export interface Asset {
   id: string;
   type: AssetType;
   value: string;
+  criticality: AssetCriticality;
+  tags: string[];
   verification_status: AssetVerificationStatus;
   verified_at: string | null;
   created_at: string;
@@ -110,4 +114,28 @@ export interface DashboardSummary {
   findingsBySeverity: Record<FindingSeverity, number>;
   averageCoveragePercentage: number;
   recentAudits: Audit[];
+}
+
+export interface AdminOrganization {
+  id: string;
+  name: string;
+  is_suspended: boolean;
+  created_at: string;
+  memberCount: number;
+  auditCount: number;
+  storageBytes: number;
+}
+
+export interface AdminMember {
+  id: string;
+  full_name: string | null;
+  role: UserRole;
+  is_platform_admin: boolean;
+  created_at: string;
+}
+
+export interface AdminActivityEvent {
+  type: "audit_created" | "asset_created" | "evidence_uploaded";
+  label: string;
+  createdAt: string;
 }

@@ -23,10 +23,12 @@ assetsRouter.post(
       .insert({
         type: body.type,
         value: body.value,
+        criticality: body.criticality,
+        tags: body.tags,
         organization_id: profile.organizationId,
         created_by: profile.id,
       })
-      .select("id, type, value, verification_status, created_at")
+      .select("id, type, value, criticality, tags, verification_status, created_at")
       .single();
 
     if (error) {
@@ -48,10 +50,17 @@ assetsRouter.get(
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("assets")
-      .select("id, type, value, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
       .order("created_at", { ascending: false });
+
+    const { type, criticality, tag } = req.query;
+    if (typeof type === "string") query = query.eq("type", type);
+    if (typeof criticality === "string") query = query.eq("criticality", criticality);
+    if (typeof tag === "string") query = query.contains("tags", [tag]);
+
+    const { data, error } = await query;
 
     if (error) {
       throw new AppError(400, "ASSET_LIST_FAILED", error.message);
@@ -71,7 +80,7 @@ assetsRouter.get(
 
     const { data, error } = await supabase
       .from("assets")
-      .select("id, type, value, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -86,6 +95,26 @@ assetsRouter.get(
     }
 
     res.status(200).json({ data });
+  })
+);
+
+assetsRouter.delete(
+  "/assets/:id",
+  authenticateToken,
+  requireRole(["ciso", "auditor"]),
+  validateUuidParams("id"),
+  asyncHandler(async (req, res) => {
+    const supabase = supabaseForUser(req.profile!.accessToken);
+
+    const { error, count } = await supabase.from("assets").delete({ count: "exact" }).eq("id", req.params.id);
+    if (error) {
+      throw new AppError(400, "ASSET_DELETE_FAILED", error.message);
+    }
+    if (!count) {
+      throw new AppError(404, "ASSET_NOT_FOUND", "Activo no encontrado");
+    }
+
+    res.status(204).send();
   })
 );
 
