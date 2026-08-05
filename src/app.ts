@@ -18,6 +18,7 @@ import { auditLogsRouter } from "./routes/auditLogs.js";
 import { settingsRouter } from "./routes/settings.js";
 import { internalFinopsRouter } from "./routes/internalFinops.js";
 import { adminKpisRouter } from "./routes/adminKpis.js";
+import { authEventsRouter } from "./routes/authEvents.js";
 
 export function createApp(): Express {
   const app = express();
@@ -45,6 +46,7 @@ export function createApp(): Express {
   app.use("/api/v1", settingsRouter);
   app.use("/api/v1", internalFinopsRouter);
   app.use("/api/v1", adminKpisRouter);
+  app.use("/api/v1", authEventsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

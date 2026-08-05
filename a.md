@@ -1,72 +1,45 @@
-# PROMPT DE REDISEÑO Y RESTRUCTURACIÓN COMPLETA DEL DASHBOARD DE ADMINISTRACIÓN (`/admin`)
+# PROMPT DE AUDITORÍA Y LIMPIEZA DE INCONSISTENCIAS EN MODELO DE DATOS, UI Y FORMULARIOS
 
-> **Instrucciones para la IA ejecutora:** Actúa como Lead UI/UX Engineer & Senior Product Designer (Next.js, Tailwind CSS, Shadcn UI / Lucide Icons, Recharts). Rediseña por completo el Dashboard de Administración (`/admin`) de Aegis CyberAudit para convertirlo en un espacio de trabajo ejecutivo moderno, cómodo, altamente funcional y libre de saturación visual. Simplifica el modelo de Organizaciones para que cada Organización represente únicamente a la Entidad/Empresa en sí, sin agrupar o listar usuarios dentro de ella.
+> **Instrucciones para la IA ejecutora:** Actúa como Senior Full-Stack Auditor & Refactoring Specialist (Next.js, Supabase PostgreSQL, TypeScript). Realiza una auditoría exhaustiva en la plataforma Aegis CyberAudit para detectar y eliminar datos fantasma, campos obsoletos en tablas de la UI, discrepancias entre formularios y la base de datos, y valores por defecto innecesarios (ej. columna "RUT / Sin RUT").
 
 ---
 
 ## 🎯 OBJETIVO
-Transformar la vista administrativa actual en un Centro de Control Unificado (Command Center) con navegación intuitiva, jerarquía visual limpia y soporte para modo oscuro/claro. Se debe desacoplar la gestión de Usuarios de la tabla de Organizaciones: las Organizaciones se administrarán como entidades de empresa independientes (datos de la compañía, dominios asociados, plan y estado de cumplimiento de la Ley N° 21.663), mientras que los Usuarios se gestionarán en su propio módulo dedicado.
+Alinear la base de datos, los controladores/endpoints del backend y los componentes de la interfaz de usuario para eliminar cualquier campo o columna que no corresponda a los formularios actuales o que genere desorden visual (como solicitar o mostrar un RUT cuando la plataforma no lo captura).
 
 ---
 
-## 🛠️ REQUERIMIENTOS DE ARQUITECTURA UI/UX Y DISEÑO
+## 🛠️ REQUERIMIENTOS DE AUDITORÍA Y REFACTORIZACIÓN
 
-### 1. 📐 ESTRUCTURA Y NAVEGACIÓN PRINCIPAL (Layout Base)
-* **Sidebar Lateral Retráctil (Collapsible Sidebar):**
-  * Reemplazar la barra de botones horizontales superior por un menú lateral fijo y colapsable.
-  * Agrupar las secciones en categorías claras con iconos modernos (Lucide Icons):
-    * **General:** `Dashboard / Resumen`, `KPIs de Negocio`.
-    * **Gestión:** `Usuarios y Permisos`, `Organizaciones y Dominios` (Entidades de Empresa puras).
-    * **Operaciones & Seguridad:** `Auditorías y Escaneos`, `Audit Logs & Trazabilidad`.
-    * **Finanzas & FinOps:** `Costos Reales Stack`, `Simulador FinOps Interno`.
-* **Barra Superior Global (Header Bar):**
-  * Buscador universal (Cmd+K / Ctrl+K) para encontrar rápidamente cualquier organización, dominio o usuario.
-  * Badges de estado del sistema (Estado de Workers de escaneo, Conexión a APIs).
-  * Menú de perfil de administrador y switch de modo Oscuro / Claro.
+### 1. 🧹 ELIMINACIÓN DE CAMPOS FANTASMA Y REMOCIÓN DEL RUT
+* **Auditoría de UI en Organizaciones / Empresas:**
+  * Eliminar la columna **"RUT"** (y el fallback *"Sin RUT"*) de las tablas administrativas (`/admin/organizations`, `/admin/users`, etc.).
+  * Si en la base de datos (tabla `organizations`) existe la columna `tax_id` o `rut`, evaluarla: si no forma parte del flujo actual de onboarding, marcarla como opcional/deprecada o eliminarla de las consultas SELECT.
+* **Revisión de Formularios vs. Tablas:**
+  * Mapear todos los formularios de la plataforma (Registro, Ajustes de Perfil, Crear Organización, Agregar Dominio).
+  * Garantizar que la tabla solo muestre columnas que correspondan estrictamente a datos capturados en la interfaz.
 
 ---
 
-### 2. 🎨 REDISEÑO DE SECCIONES CLAVE Y MODELO DE ENTIDADES
+### 2. 🔍 DETECCIÓN Y CORRECCIÓN DE OTRAS INCONSISTENCIAS
+Revisar y corregir los siguientes puntos críticos que suelen quedar desalineados:
 
-#### A. Centro de Control (`/admin/overview`)
-* Vista de entrada con 4 tarjetas principales de métricas clave (Stats Cards) con indicadores de tendencia (+/- %):
-  * Total de Empresas / Organizaciones Registradas.
-  * Dominios Verificados vs. Pendientes.
-  * MRR / Salud Financiera Real.
-  * Auditorías Ejecutadas en el Mes.
-* Gráfico principal interactivo de actividad reciente y alertas operativas que requieran atención inmediata.
-
-#### B. Módulo Independiente de Organizaciones (`/admin/organizations`)
-* **Modelo Único de Empresa:** La vista y la tabla de Organizaciones deben listar exclusivamente a las empresas (entidades corporativas) como registros individuales. **ELIMINAR las columnas, conteos o listas de "Usuarios" dentro de las filas de Organizaciones**.
-* **Información de la Entidad:** Cada fila mostrará únicamente: Nombre de la Empresa, RUT/ID Tributario, Dominio Principal, Plan Contratado (Starter/Pro), Estado de Verificación DNS y Fecha de Registro.
-* **Acciones Rápidas en Línea (Row Actions):**
-  * Editar datos de la empresa.
-  * Cambiar plan o estado de la suscripción.
-  * Ver auditorías y dominios de la empresa.
-  * Eliminar / Archivar organización.
-
-#### C. Módulo Independiente de Usuarios (`/admin/users`)
-* Gestión global de usuarios de la plataforma en su propia Data Table avanzada (Shadcn/TanStack Table).
-* Columnas: Nombre, Correo, Estado de Cuenta, Rol Global (`is_platform_admin`), Organización Asociada (campo de texto/badge de referencia única) y Acciones.
-* Acciones en línea: Cambiar privilegio `is_platform_admin`, reasignar empresa de pertenencia o desactivar cuenta.
-
-#### D. Integración Módulos FinOps y KPIs
-* Unificar la navegación entre el consumo real de infraestructura (`/admin/costs`) y el simulador de proyección (`/admin/internal-finops`) bajo una sola pestaña con sub-navegación limpia (Tabs).
+1. **Campos "N/A", "Sin asignar" o "Sin RUT" recurrentes:**
+   * Reemplazar textos estáticos de fallback por campos limpios, o simplemente eliminar esas columnas si no aportan valor directo a la administración.
+2. **Discrepancia en Fechas y Marcas de Tiempo:**
+   * Validar que los campos de fecha (`created_at`, `verified_at`, `last_sign_in_at`) se muestren en formato relativo o legible en español (ej. *"Hace 2 horas"*, *"05/08/2026"*) en lugar de imprimir cadenas ISO crudas o `null`.
+3. **Mapeo Limpio de Enum/Estados:**
+   * Garantizar que los estados de base de datos (ej. `is_verified: true/false`, `role: 'member'`) se traduzcan en la UI a badges limpios (ej. verde `✓ Verificado`, amarillo `Pendiente`) en lugar de mostrar booleanos o identificadores en inglés.
 
 ---
 
-### 3. 🎨 COMPONENTES Y ESTÁNDARES DE ESTILO
-* **Librería de Componentes:** Utilizar componentes basados en Radix UI / Shadcn UI y Tailwind CSS.
-* **Manejo de Estados de Carga y Errores:**
-  * Implementar **Skeletons** (pantallas de carga animadas) mientras se obtienen los datos.
-  * Desplegar notificaciones flotantes (**Toasts**) para confirmar acciones exitosas o mostrar errores amigables.
-* **Diseño Responsivo y Espaciado:** Tarjetas con bordes sutiles, sombras suaves, buen contraste de tipografía y paddings holgados para evitar la sensación de desorden.
+### 3. 🗄️ REFACTORIZACIÓN DE CONSULTAS Y TIPOS TYPESCRIPT
+* **Tipos de TypeScript (`types/index.ts` o `types/supabase.ts`):** Actualizar los tipos de `Organization` y `User` para eliminar las propiedades en desuso (`rut`, `tax_id`, etc.) y evitar autocompletados erróneos en el código.
+* **Consultas SQL / Supabase Client:** Ajustar las llamadas `.select(...)` para traer únicamente las columnas requeridas por los componentes de la UI, optimizando el rendimiento de la red.
 
 ---
 
 ## 📌 ENTREGABLES ESPERADOS
-1. Nuevo Layout principal (`/admin/layout.tsx`) con Sidebar retráctil, Header global y navegación agrupada por categorías.
-2. Rediseño de la vista principal de administración (`/admin/page.tsx`) con tarjetas de métricas globales y accesos directos.
-3. Reestructuración completa de `/admin/organizations` aislando la entidad de empresa sin dependencias ni columnas de usuarios agrupados.
-4. Vista de `/admin/users` con Data Table avanzada para la administración global de usuarios y permisos.
-5. Mantenimiento estricto de la protección por middleware para usuarios con `is_platform_admin = true`.
+1. Eliminación de la columna "RUT" y textos "Sin RUT" en todas las vistas administrativas.
+2. Informe/resumen breve de los campos y tipos TypeScript refactorizados.
+3. Componentes de tabla (`DataTables`) limpios, mostrando únicamente la información real capturada en la plataforma.

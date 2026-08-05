@@ -8,6 +8,13 @@ import { validateUuidParams } from "../middlewares/validateParams.js";
 import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 import { redisConnectionForQueue } from "../config/redis.js";
 import { getLatestIndicators } from "../services/economicIndicators.js";
+import { sensitiveActionRateLimiter } from "../middlewares/security.js";
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+const FAILED_LOGIN_ALERT_THRESHOLD = 3;
 
 export const adminRouter = Router();
 
@@ -16,7 +23,7 @@ export const adminRouter = Router();
  * entidades de empresa puras (a.md, "Módulo Independiente de
  * Organizaciones") — sin conteos ni listas de usuarios en la fila, eso
  * ahora vive exclusivamente en `/admin/users`. Cada fila trae identidad de
- * empresa (nombre, rut, plan), dominio principal + estado de verificación
+ * empresa (nombre, plan), dominio principal + estado de verificación
  * DNS, y una estimación de uso de Storage (suma de
  * audit_evidences.size_bytes, que ya guardamos por evidencia — evita tener
  * que llamar a la Management API de Supabase, que requiere un token
@@ -31,7 +38,7 @@ adminRouter.get(
     const [{ data: organizations, error: orgsError }, { data: auditRows }, { data: domainRows }] = await Promise.all([
       supabaseAdmin
         .from("organizations")
-        .select("id, name, rut, plan, is_suspended, created_at")
+        .select("id, name, plan, is_suspended, created_at")
         .order("created_at", { ascending: false }),
       supabaseAdmin.from("audits").select("id, organization_id"),
       supabaseAdmin
@@ -90,11 +97,10 @@ adminRouter.get(
 
 const updateOrganizationSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  rut: z.string().trim().max(20).nullable().optional(),
   plan: z.enum(["starter", "pro", "custom"]).optional(),
 });
 
-/** Edita los datos de identidad de la empresa (nombre, rut, plan) — a.md, "Editar datos de la empresa" / "Cambiar plan". */
+/** Edita los datos de identidad de la empresa (nombre, plan) — a.md, "Editar datos de la empresa" / "Cambiar plan". */
 adminRouter.patch(
   "/admin/organizations/:id",
   authenticateToken,
@@ -108,7 +114,7 @@ adminRouter.patch(
 
     const { data: before } = await supabaseAdmin
       .from("organizations")
-      .select("name, rut, plan")
+      .select("name, plan")
       .eq("id", req.params.id)
       .maybeSingle();
     if (!before) throw new AppError(404, "ORGANIZATION_NOT_FOUND", "Organización no encontrada");
@@ -117,7 +123,7 @@ adminRouter.patch(
       .from("organizations")
       .update(body)
       .eq("id", req.params.id)
-      .select("id, name, rut, plan, is_suspended, created_at")
+      .select("id, name, plan, is_suspended, created_at")
       .maybeSingle();
 
     if (error) throw new AppError(400, "ORGANIZATION_UPDATE_FAILED", error.message);
@@ -446,6 +452,25 @@ adminRouter.post(
  * 1000; para una base de usuarios de este tamaño (decenas/cientos, no
  * millones) una sola página alcanza — si la plataforma creciera mucho más
  * habría que paginar de verdad acá.
+ *
+ * También devuelve `stats` para las 4 tarjetas de indicadores de
+ * /admin/users (a.md, sección 1):
+ * - Estado de cuentas: activo = `last_sign_in_at` dentro de los últimos 30
+ *   días y no baneado.
+ * - Seguridad: % con 2FA activo (`factors` con algún factor `verified` —
+ *   viene de `auth.mfa_factors` vía la misma Admin API, dato real; hoy la
+ *   app no ofrece UI para enrolar MFA, así que este número da 0% hasta que
+ *   esa función exista, en vez de estar inventado) + cuentas con intentos
+ *   fallidos de login recientes. Esto último se adapta: el login pega
+ *   directo a Supabase Auth desde el browser, nunca pasa por este backend,
+ *   así que no hay señal server-side nativa de intentos fallidos sin un
+ *   Auth Hook. Se cuenta en cambio sobre `audit_logs` con
+ *   AUTH_LOGIN_FAILED, que el propio login page reporta
+ *   (`POST /auth/log-failure`) — mismo dato real, solo con otra fuente.
+ * - Privilegios: conteo estricto de `is_platform_admin = true`.
+ * - Adopción/retención: cuentas "abandonadas" = creadas hace más de 14 días
+ *   (les damos margen a las recién creadas que aún no iniciaron sesión) y
+ *   sin login en los últimos 90 días (o nunca).
  */
 adminRouter.get(
   "/admin/users",
@@ -460,9 +485,20 @@ adminRouter.get(
       .order("created_at", { ascending: false });
     if (organizationId) query = query.eq("organization_id", organizationId);
 
-    const [{ data: profiles, error: profilesError }, { data: authList, error: authError }] = await Promise.all([
+    const failedLoginsSince = new Date(Date.now() - TWENTY_FOUR_HOURS_MS).toISOString();
+
+    const [
+      { data: profiles, error: profilesError },
+      { data: authList, error: authError },
+      { data: failedLoginRows },
+    ] = await Promise.all([
       query,
       supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      supabaseAdmin
+        .from("audit_logs")
+        .select("payload_after")
+        .eq("action", AUDIT_ACTIONS.AUTH_LOGIN_FAILED)
+        .gte("created_at", failedLoginsSince),
     ]);
 
     if (profilesError) throw new AppError(400, "USERS_LIST_FAILED", profilesError.message);
@@ -470,24 +506,71 @@ adminRouter.get(
 
     const authById = new Map(authList.users.map((u) => [u.id, u]));
 
+    const failedLoginsByEmail = new Map<string, number>();
+    for (const row of failedLoginRows ?? []) {
+      const email = (row.payload_after as { email?: string } | null)?.email?.toLowerCase();
+      if (!email) continue;
+      failedLoginsByEmail.set(email, (failedLoginsByEmail.get(email) ?? 0) + 1);
+    }
+
+    const now = Date.now();
+    let activeCount = 0;
+    let platformAdminCount = 0;
+    let staleAccountCount = 0;
+    let twoFactorCount = 0;
+    let failedLoginAlertCount = 0;
+
     const data = (profiles ?? []).map((p) => {
       const authUser = authById.get(p.id);
       const org = Array.isArray(p.organizations) ? p.organizations[0] : p.organizations;
       const bannedUntil = (authUser as { banned_until?: string } | undefined)?.banned_until;
+      const isDeactivated = Boolean(bannedUntil && new Date(bannedUntil).getTime() > now);
+      const lastSignInAt = authUser?.last_sign_in_at ?? null;
+      const hasTwoFactor = Boolean(authUser?.factors?.some((f) => f.status === "verified"));
+      const email = authUser?.email ?? null;
+
+      const lastSignInMs = lastSignInAt ? new Date(lastSignInAt).getTime() : null;
+      const accountAgeMs = now - new Date(p.created_at).getTime();
+
+      if (!isDeactivated && lastSignInMs !== null && now - lastSignInMs <= THIRTY_DAYS_MS) activeCount++;
+      if (p.is_platform_admin) platformAdminCount++;
+      if (hasTwoFactor) twoFactorCount++;
+      if (accountAgeMs > FOURTEEN_DAYS_MS && (lastSignInMs === null || now - lastSignInMs > NINETY_DAYS_MS)) {
+        staleAccountCount++;
+      }
+      if (email && (failedLoginsByEmail.get(email.toLowerCase()) ?? 0) >= FAILED_LOGIN_ALERT_THRESHOLD) {
+        failedLoginAlertCount++;
+      }
+
       return {
         id: p.id,
         fullName: p.full_name,
-        email: authUser?.email ?? null,
+        email,
         role: p.role,
         isPlatformAdmin: p.is_platform_admin,
         organizationId: p.organization_id,
         organizationName: org?.name ?? null,
         createdAt: p.created_at,
-        isDeactivated: Boolean(bannedUntil && new Date(bannedUntil).getTime() > Date.now()),
+        isDeactivated,
+        lastSignInAt,
+        hasTwoFactor,
       };
     });
 
-    res.status(200).json({ data });
+    const total = data.length;
+
+    res.status(200).json({
+      data,
+      stats: {
+        totalUsers: total,
+        activeCount,
+        inactiveCount: total - activeCount,
+        twoFactorPercentage: total > 0 ? Math.round((twoFactorCount / total) * 100) : 0,
+        failedLoginAlertCount,
+        platformAdminCount,
+        staleAccountCount,
+      },
+    });
   })
 );
 
@@ -534,6 +617,61 @@ adminRouter.post(
     });
 
     res.status(200).json({ data: { userId: body.userId, isDeactivated: body.deactivated } });
+  })
+);
+
+const resetPasswordSchema = z.object({
+  userId: z.string().uuid(),
+  newPassword: z.string().min(8, "La contraseña debe tener al menos 8 caracteres"),
+});
+
+/**
+ * Restablecimiento administrativo de contraseña (a.md, sección 3): un
+ * platform admin fija la contraseña de otra persona vía Admin API y, para
+ * que quede realmente persistido y no solo "cambiado en la BD pero con la
+ * sesión vieja todavía viva en otro dispositivo", fuerza el cierre de
+ * cualquier sesión activa de ese usuario (`force_sign_out_user`, migración
+ * 020 — ver ese archivo para por qué no alcanza con supabase-js solo).
+ * `sensitiveActionRateLimiter` porque es una operación de alto impacto.
+ */
+adminRouter.post(
+  "/admin/users/reset-password",
+  authenticateToken,
+  requirePlatformAdmin,
+  sensitiveActionRateLimiter,
+  asyncHandler(async (req, res) => {
+    const body = resetPasswordSchema.parse(req.body);
+
+    const { data: profile } = await supabaseAdmin
+      .from("profiles")
+      .select("organization_id")
+      .eq("id", body.userId)
+      .maybeSingle();
+    if (!profile) throw new AppError(404, "USER_NOT_FOUND", "Usuario no encontrado");
+
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(body.userId, {
+      password: body.newPassword,
+    });
+    if (updateError) throw new AppError(400, "PASSWORD_RESET_FAILED", updateError.message);
+
+    const { error: signOutError } = await supabaseAdmin.rpc("force_sign_out_user", {
+      target_user_id: body.userId,
+    });
+    if (signOutError) {
+      console.error(`[admin] no se pudieron invalidar las sesiones de ${body.userId}:`, signOutError.message);
+    }
+
+    await logAuditEvent({
+      organizationId: profile.organization_id,
+      actorId: req.profile!.id,
+      action: AUDIT_ACTIONS.AUTH_PASSWORD_RESET_BY_ADMIN,
+      resourceType: "user",
+      resourceId: body.userId,
+      payloadAfter: { sessionsInvalidated: !signOutError },
+      ...requestContext(req),
+    });
+
+    res.status(200).json({ data: { userId: body.userId, sessionsInvalidated: !signOutError } });
   })
 );
 

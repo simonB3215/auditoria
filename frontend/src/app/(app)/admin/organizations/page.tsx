@@ -40,7 +40,6 @@ export default function AdminOrganizationsPage() {
 
   const [editingOrg, setEditingOrg] = useState<AdminOrganization | null>(null);
   const [editName, setEditName] = useState("");
-  const [editRut, setEditRut] = useState("");
   const [editPlan, setEditPlan] = useState<OrganizationPlan>("starter");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -69,17 +68,13 @@ export default function AdminOrganizationsPage() {
     const q = search.trim().toLowerCase();
     if (!q) return orgs;
     return orgs.filter(
-      (o) =>
-        o.name.toLowerCase().includes(q) ||
-        o.rut?.toLowerCase().includes(q) ||
-        o.primaryDomain?.toLowerCase().includes(q)
+      (o) => o.name.toLowerCase().includes(q) || o.primaryDomain?.toLowerCase().includes(q)
     );
   }, [orgs, search]);
 
   function openEdit(org: AdminOrganization) {
     setEditingOrg(org);
     setEditName(org.name);
-    setEditRut(org.rut ?? "");
     setEditPlan(org.plan);
     setEditError(null);
   }
@@ -92,7 +87,6 @@ export default function AdminOrganizationsPage() {
     try {
       const res = await api.patch<{ data: AdminOrganization }>(`/api/v1/admin/organizations/${editingOrg.id}`, {
         name: editName.trim(),
-        rut: editRut.trim() || null,
         plan: editPlan,
       });
       setOrgs((prev) => prev.map((o) => (o.id === editingOrg.id ? { ...o, ...res.data.data } : o)));
@@ -185,11 +179,10 @@ export default function AdminOrganizationsPage() {
             <p className="text-sm text-muted-foreground">{t.noResults}</p>
           ) : (
             <div className="overflow-x-auto">
-            <Table className="min-w-[820px]">
+            <Table className="min-w-[720px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.colName}</TableHead>
-                  <TableHead>{t.colRut}</TableHead>
                   <TableHead>{t.colDomain}</TableHead>
                   <TableHead>{t.colPlan}</TableHead>
                   <TableHead>{t.colVerification}</TableHead>
@@ -202,7 +195,6 @@ export default function AdminOrganizationsPage() {
                 {filteredOrgs.map((org) => (
                   <TableRow key={org.id} className="cursor-pointer" onClick={() => openDetail(org)}>
                     <TableCell className="font-medium">{org.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{org.rut ?? t.noRut}</TableCell>
                     <TableCell className="text-muted-foreground">{org.primaryDomain ?? t.noDomain}</TableCell>
                     <TableCell>
                       <Badge variant="outline">{PLAN_LABEL[org.plan]}</Badge>
@@ -259,10 +251,6 @@ export default function AdminOrganizationsPage() {
             <div className="flex flex-col gap-2">
               <Label htmlFor="org-name">{t.fieldName}</Label>
               <Input id="org-name" required value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="org-rut">{t.fieldRut}</Label>
-              <Input id="org-rut" value={editRut} onChange={(e) => setEditRut(e.target.value)} placeholder="76.123.456-7" />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="org-plan">{t.fieldPlan}</Label>

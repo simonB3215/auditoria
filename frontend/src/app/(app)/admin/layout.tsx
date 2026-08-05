@@ -43,7 +43,6 @@ interface NavGroup {
 interface SearchOrg {
   id: string;
   name: string;
-  rut: string | null;
   primaryDomain: string | null;
 }
 
@@ -124,12 +123,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (q.length < 2) return { orgs: [], users: [] };
     return {
       orgs: orgsIndex
-        .filter(
-          (o) =>
-            o.name.toLowerCase().includes(q) ||
-            o.rut?.toLowerCase().includes(q) ||
-            o.primaryDomain?.toLowerCase().includes(q)
-        )
+        .filter((o) => o.name.toLowerCase().includes(q) || o.primaryDomain?.toLowerCase().includes(q))
         .slice(0, 5),
       users: usersIndex
         .filter((u) => u.fullName?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q))

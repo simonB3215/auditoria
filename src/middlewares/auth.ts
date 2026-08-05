@@ -20,12 +20,43 @@ interface VerifiedToken {
  * es una compensación aceptable a cambio de no romperse con cada cambio
  * del esquema de claves de Supabase.
  */
-async function verifySupabaseToken(header: string | undefined): Promise<VerifiedToken | null> {
+
+/**
+ * Clasifica el mensaje de error que devuelve `auth.getUser` para poder
+ * diagnosticar desincronizaciones de reloj cliente/servidor y refresh
+ * tokens perdidos (a.md, sección 4) sin depender de parsear el JWT a mano
+ * acá — Supabase Auth ya hizo esa verificación, solo se interpreta su
+ * mensaje.
+ */
+function classifyTokenError(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("expired")) return "jwt_expired";
+  if (lower.includes("refresh_token_not_found") || lower.includes("refresh token not found")) return "refresh_token_not_found";
+  if (lower.includes("invalid") || lower.includes("malformed")) return "invalid_credentials";
+  return "unknown";
+}
+
+async function verifySupabaseToken(req: Request, header: string | undefined): Promise<VerifiedToken | null> {
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice("Bearer ".length).trim();
 
   const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data.user) return null;
+  if (error || !data.user) {
+    if (error) {
+      const reason = classifyTokenError(error.message);
+      console.warn(`[auth] token rechazado (${reason}) en ${req.method} ${req.path}: ${error.message}`);
+      await logAuditEvent({
+        organizationId: null,
+        actorId: null,
+        action: AUDIT_ACTIONS.AUTH_TOKEN_REJECTED,
+        resourceType: "auth",
+        resourceId: null,
+        payloadAfter: { reason, path: req.path, method: req.method },
+        ...requestContext(req),
+      });
+    }
+    return null;
+  }
 
   return { userId: data.user.id, token };
 }
@@ -41,7 +72,7 @@ export async function authenticateToken(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const verified = await verifySupabaseToken(req.headers.authorization);
+  const verified = await verifySupabaseToken(req, req.headers.authorization);
   if (!verified) {
     res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
     return;
@@ -108,7 +139,7 @@ export async function authenticateToken(
  * ese profile exista.
  */
 export async function authenticateTokenOnly(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const verified = await verifySupabaseToken(req.headers.authorization);
+  const verified = await verifySupabaseToken(req, req.headers.authorization);
   if (!verified) {
     res.status(401).json({ error: { code: "UNAUTHORIZED", message: "Falta el token de autenticación o es inválido" } });
     return;

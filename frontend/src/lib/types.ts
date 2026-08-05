@@ -147,7 +147,6 @@ export type OrganizationPlan = "starter" | "pro" | "custom";
 export interface AdminOrganization {
   id: string;
   name: string;
-  rut: string | null;
   plan: OrganizationPlan;
   is_suspended: boolean;
   created_at: string;
@@ -167,6 +166,18 @@ export interface AdminUser {
   organizationName: string | null;
   createdAt: string;
   isDeactivated: boolean;
+  lastSignInAt: string | null;
+  hasTwoFactor: boolean;
+}
+
+export interface AdminUserStats {
+  totalUsers: number;
+  activeCount: number;
+  inactiveCount: number;
+  twoFactorPercentage: number;
+  failedLoginAlertCount: number;
+  platformAdminCount: number;
+  staleAccountCount: number;
 }
 
 export interface AdminActivityEvent {

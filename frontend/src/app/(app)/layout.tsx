@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser, Timer } from "lucide-react";
+import { KeyRound, LayoutDashboard, LogOut, Server, ShieldCheck, ShieldUser, Timer } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile } from "@/hooks/useProfile";
@@ -64,6 +64,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 {t.settings}
               </Link>
             )}
+            <Link
+              href="/settings/account"
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+            >
+              <KeyRound className="size-4" aria-hidden />
+              {t.account}
+            </Link>
             {profile?.isPlatformAdmin && (
               <Link
                 href="/admin"

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
 import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,11 @@ export default function LoginPage() {
 
     if (signInError) {
       setError(signInError.message === "Invalid login credentials" ? t.wrongCredentials : signInError.message);
+      // Best-effort: el login pega directo a Supabase Auth, no a nuestro
+      // backend, así que esta es la única forma de dejar registro del
+      // fallo en audit_logs (a.md, sección 4). Nunca debe bloquear ni
+      // demorar el feedback al usuario si falla.
+      api.post("/api/v1/auth/log-failure", { email, reason: signInError.message }).catch(() => {});
       return;
     }
 

@@ -27,13 +27,16 @@ export const AUDIT_ACTIONS = {
   ORGANIZATION_UPDATED: "ORGANIZATION_UPDATED",
   USER_ACCOUNT_DEACTIVATED: "USER_ACCOUNT_DEACTIVATED",
   USER_ACCOUNT_REACTIVATED: "USER_ACCOUNT_REACTIVATED",
+  AUTH_LOGIN_FAILED: "AUTH_LOGIN_FAILED",
+  AUTH_TOKEN_REJECTED: "AUTH_TOKEN_REJECTED",
+  AUTH_PASSWORD_RESET_BY_ADMIN: "AUTH_PASSWORD_RESET_BY_ADMIN",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
-export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan" | "asset";
+export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan" | "asset" | "auth";
 
 interface LogAuditEventParams {
-  organizationId: string;
+  organizationId: string | null;
   actorId: string | null;
   action: AuditAction;
   resourceType: AuditResourceType;

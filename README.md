@@ -192,6 +192,68 @@ URLs de Supabase.
   de evidencias (`/audits/:id`) muestra "Usuario eliminado / Sistema" en
   vez de romperse cuando el que subió el archivo ya no tiene perfil.
 
+### Persistencia de sesión y contraseñas
+Diagnóstico y correcciones sobre expiración de sesión e indicadores de
+usuarios (a.md, "PROMPT DE DIAGNÓSTICO Y CORRECCIÓN: PERSISTENCIA DE
+SESIÓN..."):
+- **Middleware de Next.js (`frontend/src/middleware.ts` /
+  `lib/supabase/middleware.ts`)**: se revisó contra el patrón canónico de
+  `@supabase/ssr` y ya estaba correcto — llama `supabase.auth.getUser()`
+  (que refresca la sesión si hace falta) y reemite las cookies actualizadas
+  en cada response. No se encontró ahí la causa de cierres de sesión
+  prematuros; el TTL de tokens en sí es una config del proyecto Supabase
+  (Auth > Settings), no algo controlable desde el código de la app.
+- **Interceptor de refresh-and-retry (`frontend/src/lib/api.ts`)**: el gap
+  real está en el cliente del browser — `getSession()` refresca cuando
+  detecta el token vencido, pero queda una ventana (reloj desincronizado,
+  pestaña en segundo plano que no corrió el timer de auto-refresh) donde
+  igual llega un access token vencido al backend, que responde 401 y cada
+  página lo mostraba como error aunque el refresh token siguiera siendo
+  válido — el síntoma de "expiración prematura" que reporta a.md. Se agregó
+  un interceptor de respuesta que, ante un 401, intenta
+  `supabase.auth.refreshSession()` una vez y reintenta la request original;
+  si el refresh también falla, el error se propaga igual que antes (no hay
+  loop ni redirect forzado nuevo).
+- **Cambio de contraseña propio (`/settings/account`, página nueva)**:
+  formulario mínimo que llama `supabase.auth.updateUser({ password })`
+  directo desde el browser (no pasa por el backend, igual que el login) y
+  fuerza `refreshSession()` después para que el nuevo token quede propagado
+  sin cerrar la sesión de la pestaña actual (a.md: "sin cerrar la ventana
+  actual") — verificado con Playwright que tras cambiar la contraseña la
+  navegación a `/dashboard` no redirige a `/login`.
+- **Restablecimiento administrativo (`/admin/users`, botón "Restablecer
+  contraseña")**: `POST /api/v1/admin/users/reset-password` usa
+  `auth.admin.updateUserById` para fijar la contraseña y además invalida
+  las sesiones del usuario en otros dispositivos. supabase-js (auth-js
+  2.112) solo expone `auth.admin.signOut(jwt, scope)`, que pide el JWT de
+  la sesión a cerrar — inútil cuando un admin actúa sobre la cuenta de otra
+  persona, de la que no tiene ningún token. La forma soportada por Supabase
+  para este caso es borrar las filas de `auth.sessions` del usuario
+  directamente; se expuso como función `SECURITY DEFINER`
+  (`db/migrations/020_force_sign_out_function.sql`, `force_sign_out_user`)
+  llamada vía `supabaseAdmin.rpc(...)` en vez de abrir una conexión `pg`
+  nueva en el backend (que hoy solo usa supabase-js). **Matiz importante**:
+  esto invalida el *refresh token* (fuerza re-login en cuanto el access
+  token en curso expire, normalmente ≤1h) — no revoca instantáneamente un
+  access token JWT ya emitido y todavía no vencido, porque esos JWT son
+  auto-contenidos y no se validan contra una tabla de sesiones. Es una
+  propiedad de JWT sin estado, no una limitación de esta implementación.
+  Verificado con un script contra Supabase real: el refresh token previo al
+  reset queda rechazado (`Invalid Refresh Token: Refresh Token Not Found`)
+  y la contraseña vieja deja de servir para loguearse.
+- **Logging de errores de autenticación (a.md, sección 4)**:
+  `authenticateToken` clasifica el mensaje de `auth.getUser()`
+  (`jwt_expired` / `refresh_token_not_found` / `invalid_credentials` /
+  `unknown`), lo loguea en consola y lo registra en `audit_logs`
+  (`AUTH_TOKEN_REJECTED`). El login en sí pega directo a Supabase Auth
+  desde el browser — nunca pasa por este backend — así que no hay señal
+  server-side nativa de intentos fallidos de login sin configurar un Auth
+  Hook de Supabase (infraestructura fuera de alcance). Como adaptación
+  honesta, `/login` reporta el fallo con un best-effort
+  `POST /api/v1/auth/log-failure` (público, sin token porque en ese momento
+  no existe sesión, protegido por el rate limiter estricto existente) que
+  también escribe en `audit_logs` (`AUTH_LOGIN_FAILED`).
+
 ### Panel de administración (`/admin`) — Command Center
 Rediseño completo del panel de plataforma (a.md, "Rediseño y reestructuración
 completa del Dashboard de Administración") con navegación por sidebar
@@ -234,10 +296,16 @@ colapsable y las organizaciones desacopladas de la gestión de usuarios.
   existe ningún snapshot histórico guardado para calcular una variación
   real, así que se muestran los valores absolutos del periodo actual.
 - **`/admin/organizations`**: las organizaciones pasan a ser una entidad
-  de empresa pura — nombre, RUT, dominio principal, plan, estado de
+  de empresa pura — nombre, dominio principal, plan, estado de
   verificación DNS, sin ninguna columna ni conteo de usuarios en la fila
-  (`organizations.rut` y `organizations.plan`, migración
-  `019_organization_entity_fields.sql`). `plan` es una **etiqueta**
+  (`organizations.plan`, migración `019_organization_entity_fields.sql`).
+  La misma migración agregó también `organizations.rut`, pero ningún
+  formulario de la plataforma lo capturaba (el onboarding solo pide
+  nombre) — quedaba `null` siempre y solo generaba una columna/fallback
+  "Sin RUT" sin valor real; se eliminó por completo (columna, endpoints y
+  UI) en la migración `021_drop_organization_rut.sql` (a.md, "AUDITORÍA Y
+  LIMPIEZA DE INCONSISTENCIAS EN MODELO DE DATOS, UI Y FORMULARIOS").
+  `plan` es una **etiqueta**
   administrativa editable (`starter`/`pro`/`custom`), no una suscripción
   real — no hay pasarela de pagos conectada, mismo criterio que
   `is_suspended`. Acciones por fila: editar (`PATCH
@@ -253,6 +321,19 @@ colapsable y las organizaciones desacopladas de la gestión de usuarios.
   cuenta** — nuevo (`POST /admin/users/deactivate`): usa el "ban" nativo
   de Supabase Auth (bloquea el login de inmediato, verificado end-to-end)
   en vez de un flag propio que habría que duplicar en `authenticateToken`.
+  **Restablecer contraseña** (nuevo, ver "Persistencia de sesión y
+  contraseñas" arriba) también vive acá, un botón por fila. Encima de la
+  tabla, 4 tarjetas de indicadores (a.md, sección 1) calculadas por
+  `GET /admin/users` sobre los mismos datos que ya trae (sin una consulta
+  extra por tarjeta): activos/inactivos (sesión en los últimos 30 días),
+  % de cuentas con 2FA activo + alerta si hay cuentas con ≥3 intentos
+  fallidos de login en 24h (ver adaptación de logging más arriba — hoy da
+  0% de 2FA porque la app todavía no ofrece UI para enrolar factores, es un
+  número real, no inventado), conteo estricto de `is_platform_admin = true`,
+  y cuentas "posiblemente abandonadas" (creadas hace más de 14 días sin
+  login en los últimos 90). La tabla también suma una columna "Último
+  acceso" con tiempo relativo (`Intl.RelativeTimeFormat`) para poder ir
+  directo a esas cuentas.
 - **FinOps unificado bajo tabs**: `/admin/costs` y `/admin/internal-finops`
   siguen siendo dos páginas independientes (cada una con su propio estado
   y fetching, uno mide gasto real y el otro simula ingresos) pero ahora
@@ -283,6 +364,45 @@ colapsable y las organizaciones desacopladas de la gestión de usuarios.
    se excluyen del escaneo de red (nmap no aplica a esos tipos).
 5. `GET /audits/:id/report` calcula el puntaje de riesgo, genera un PDF, lo
    sube a Storage, y devuelve un signed URL de descarga de corta duración.
+
+### Registro de activos accesible y guiado (`/assets`)
+El modal "Registrar recurso para auditoría" (antes "Agregar activo") está
+pensado para que lo complete cualquier perfil, no solo gente técnica —
+a.md, "Rediseño accesible y guiado del modal Agregar activo".
+- **Microcopy explicativo**: cada tipo de activo tiene una descripción en
+  lenguaje simple debajo del selector (ej. "Repositorio Git: el código
+  fuente de una aplicación"), y el placeholder del campo Valor cambia
+  según el tipo elegido (`192.168.1.10` para IP,
+  `https://github.com/tu-empresa/tu-proyecto` para repositorio, etc.).
+- **Criticidad como tarjetas, no un selector plano**: los 4 niveles
+  (crítica/alta/media/baja) se muestran como tarjetas clickeables con un
+  punto de color y una frase de impacto de negocio cada una (ej. "Si
+  falla, se detiene la operación del negocio"), armadas sobre un
+  `RadioGroup` de Radix — navegable con flechas de teclado igual que un
+  grupo de radios nativo.
+- **Etiquetas como chips**: en vez de un campo de texto libre, hay chips
+  predefinidos (Producción, Sitio Web, Interno, Backend, etc.) que se
+  activan con un clic, más un campo aparte para etiquetas propias.
+- **Validación en tiempo real sin dependencias nuevas**: el prompt
+  original pedía Zod/React Hook Form — es un solo formulario chico, así
+  que se adaptó con funciones de validación puras por tipo (regex de
+  IP/CIDR/dominio/URL de repositorio) en vez de sumar una dependencia
+  nueva al frontend (Zod hoy solo lo usa el backend). El error aparece
+  recién al salir del campo (`onBlur`), nunca mientras el usuario todavía
+  está escribiendo, y usa `aria-invalid` + `aria-describedby` + `role="alert"`
+  para que un lector de pantalla lo anuncie de inmediato.
+- **Accesibilidad (WCAG 2.1 AA)**: el focus trap y el cierre con `Esc` ya
+  los da gratis `Dialog` de Radix (no hizo falta código nuevo para eso).
+  Se sumaron dos primitivos nuevos siguiendo el mismo patrón que
+  `dropdown-menu.tsx`/`select.tsx`: `components/ui/tooltip.tsx` (los
+  íconos "?" junto a cada campo) y `components/ui/radio-group.tsx` (las
+  tarjetas de criticidad). El texto de ayuda de cada tooltip también
+  quedó visible de forma permanente debajo del campo — el tooltip es un
+  refuerzo, nunca la única vía para acceder a la explicación (hover-only
+  es un anti-patrón de accesibilidad).
+- **Botones**: "Guardar" en color primario con spinner de carga
+  (`Loader2` animado, mismo patrón que el resto de la app) y un botón
+  "Cancelar" explícito al lado, además del cierre con la "X" o `Esc`.
 
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.
@@ -388,13 +508,21 @@ de terceros sin autorización.
   arma y envía (mismo patrón "preparado pero no conectado" que el resto de
   los emails — ver más abajo) un correo con el registro TXT exacto a crear,
   reutilizable desde el modal guiado de `/assets`.
-- **UI guiada**: en `/assets`, verificar un activo de tipo dominio abre un
-  modal con explicación en lenguaje llano, el código con botón de copiado
-  de un clic, los 4 pasos a seguir, y la opción "Enviar instrucciones a mi
-  equipo de TI" (mismo diálogo, sin abrir un segundo modal superpuesto).
-  Los activos IP/CIDR siguen su verificación directa anterior (autoatestación
-  de un `ciso`, sin desafío DNS — no hay un mecanismo equivalente simple
-  para el MVP).
+- **UI guiada (a.md, "Modal de verificación de dominio por DNS")**: en
+  `/assets`, verificar un activo de tipo dominio abre un modal con
+  explicación en lenguaje llano y el registro TXT separado en dos campos
+  independientes con su propio botón de copiado — Host (`TXT` / `@`, fijo
+  porque hoy no hay un campo de subdominio distinto en el modelo de
+  `Asset`) y Valor (`aegis-site-verification=<token>`, con truncado para no
+  romper el layout) — en vez de una sola caja con todo el string, más
+  fácil de confundir al pegar en Cloudflare/NIC Chile/GoDaddy/AWS. Los 4
+  pasos incluyen una nota de propagación DNS (1-5 min), el botón
+  "Verificar ahora" muestra un spinner mientras el backend resuelve el TXT,
+  y la opción "Enviar instrucciones a mi equipo de TI" sigue siendo el
+  mismo diálogo, sin abrir un segundo modal superpuesto. Los activos
+  IP/CIDR siguen su verificación directa anterior (autoatestación de un
+  `ciso`, sin desafío DNS — no hay un mecanismo equivalente simple para el
+  MVP).
 
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
@@ -524,17 +652,19 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
 | GET | `/audits/:id/anci-status` | Cumplimiento Ley 21.663: `{ sePercentage, oivPercentage, technicalControls }` |
 | GET | `/dashboard/summary` | Métricas agregadas para el dashboard |
-| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones (entidad pura: rut, plan, dominio principal, verificación DNS, storage) |
-| PATCH | `/admin/organizations/:id` | *(platform admin)* Edita nombre/rut/plan de una organización |
+| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones (entidad pura: plan, dominio principal, verificación DNS, storage) |
+| PATCH | `/admin/organizations/:id` | *(platform admin)* Edita nombre/plan de una organización |
 | PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva (archiva) una organización |
 | DELETE | `/admin/organizations/:id` | *(platform admin)* Borra una organización |
 | GET | `/admin/organizations/:id/domains` | *(platform admin)* Dominios de una organización con su estado de verificación |
 | GET | `/admin/organizations/:id/activity` | *(platform admin)* Actividad reciente |
-| GET | `/admin/users` | *(platform admin)* Listado global de usuarios (email real, rol, org, estado de cuenta — `?organizationId=` filtra) |
+| GET | `/admin/users` | *(platform admin)* Listado global de usuarios (email real, rol, org, estado de cuenta, último acceso, 2FA — `?organizationId=` filtra) + objeto `stats` con las 4 métricas del dashboard |
 | POST | `/admin/users/role` | *(platform admin)* Cambia rol y/o `platform_admin` de un usuario |
 | POST | `/admin/users/assign-organization` | *(platform admin)* Reasigna directamente la organización de un usuario existente (`{ userId, organizationId }`), sin invitación ni correo |
 | POST | `/admin/users/deactivate` | *(platform admin)* Desactiva/reactiva una cuenta (`{ userId, deactivated }`) — bloquea el login vía ban nativo de Supabase Auth |
+| POST | `/admin/users/reset-password` | *(platform admin)* Restablece la contraseña de un usuario (`{ userId, newPassword }`) e invalida sus sesiones activas en otros dispositivos |
 | GET | `/admin/system-status` | *(platform admin)* Señales reales de salud (ping a Redis, frescura de indicadores económicos) |
+| POST | `/auth/log-failure` | *(público, rate-limited)* Registra un intento de login fallido en `audit_logs` — lo llama `/login` cuando `signInWithPassword` falla |
 | GET | `/admin/costs/summary` | *(platform admin)* Costo total estimado del mes, desglosado por servicio |
 | GET | `/admin/costs/breakdown` | *(platform admin)* Serie diaria de costo por servicio + costo por organización (`?from=&to=` ISO) |
 | GET | `/admin/costs/audits` | *(platform admin)* Auditorías ordenadas por costo total (`?limit=&from=&to=`) |
@@ -561,14 +691,15 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) + disparo manual de escaneo (estado en vivo cada 3s) |
 | `/audits/[id]/report` | Hallazgos filtrables por severidad, acciones de falso positivo/riesgo aceptado, tarjeta de cumplimiento ANCI (Ley 21.663), descarga de PDF |
 | `/admin` | *(solo platform admin)* Resumen ejecutivo: 4 KPIs reales, actividad reciente y alertas operativas (dentro del sidebar del Command Center) |
-| `/admin/organizations` | *(solo platform admin)* Organizaciones como entidad pura: rut, plan, dominio, verificación DNS, editar/archivar/eliminar, detalle de dominios y actividad |
-| `/admin/users` | *(solo platform admin)* Gestión global de usuarios: rol, `platform_admin`, reasignar organización, desactivar/reactivar cuenta |
+| `/admin/organizations` | *(solo platform admin)* Organizaciones como entidad pura: plan, dominio, verificación DNS, editar/archivar/eliminar, detalle de dominios y actividad |
+| `/admin/users` | *(solo platform admin)* Gestión global de usuarios: 4 tarjetas de indicadores, rol, `platform_admin`, reasignar organización, desactivar/reactivar cuenta, restablecer contraseña |
 | `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas (bajo tabs junto a `/admin/internal-finops`) |
 | `/admin/internal-finops` | *(solo platform admin)* FinOps interno: ticker UF/UTM/Dólar en vivo, sliders de simulación de escenario, MRR/ARR/COGS/OPEX/margen/break-even y proyección a 12 meses |
 | `/admin/kpis` | *(solo platform admin)* KPIs reales del negocio: selector de periodo, embudo comercial, indicadores operativos, actividad diaria y tabla de organizaciones por segmento |
 | `/audits/[id]/history` | Línea de tiempo de audit logs de esa auditoría (evidencias, hallazgos, reportes) |
 | `/admin/audit-logs` | *(solo platform admin)* Audit logs de toda la plataforma, filtrables por organización/acción |
 | `/settings/retention` | *(`ciso` o platform admin)* Configura días de retención de evidencias y ve estadísticas de purga |
+| `/settings/account` | Cualquier usuario autenticado: cambia su propia contraseña sin cerrar la sesión actual |
 
 Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
 `localStorage`.
@@ -589,10 +720,19 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   (ya se guarda por evidencia); no consulta la Management API de Supabase.
 - La suite de tests (`npm test`) necesita un proyecto Supabase **de test**
   separado — no se puede correr sin esa infraestructura.
-- No hay flujo de "cambiar contraseña" todavía. Tampoco hay ningún flujo de
-  invitación — cada quien crea su propia organización al registrarse; un
-  platform admin reorganiza gente después vía `/admin` (ver "Gestión
-  directa de usuarios" arriba).
+- No hay ningún flujo de invitación — cada quien crea su propia organización
+  al registrarse; un platform admin reorganiza gente después vía `/admin`
+  (ver "Gestión directa de usuarios" arriba). El cambio de contraseña
+  (propio en `/settings/account`, administrativo en `/admin/users`) sí
+  existe — ver "Persistencia de sesión y contraseñas" arriba.
+- `npm test` no corre hoy contra `.env.test`: la clave
+  `EVIDENCE_ENCRYPTION_KEY` de ese archivo tiene 42 caracteres en vez de los
+  64 hex que exige `src/config/env.ts` (falla la validación de Zod antes de
+  levantar cualquier suite). Es preexistente — no lo generó ningún cambio
+  de esta sesión — y no se corrigió porque implica escribir una clave de
+  cifrado nueva en un archivo de config sin que se haya pedido; hay que
+  regenerarla (`openssl rand -hex 32`) a mano en `.env.test` para volver a
+  correr los tests de integración.
 - El panel FinOps (`/admin/costs`) calcula costos **estimados**, no reales:
   no hay integración con las APIs de facturación de Supabase/Upstash/el
   hosting (requerirían tokens de Management API distintos al service_role).

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, Mail, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Check, Copy, HelpCircle, Loader2, Mail, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -13,10 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -25,6 +29,83 @@ import {
 
 const ASSET_TYPES: AssetType[] = ["ip", "cidr", "domain", "repository", "cloud_server"];
 const CRITICALITIES: AssetCriticality[] = ["critica", "alta", "media", "baja"];
+const TAG_CHIP_KEYS = ["production", "website", "internal", "testing", "backend", "frontend", "api", "database"] as const;
+
+const CRITICALITY_DOT: Record<AssetCriticality, string> = {
+  critica: "bg-[var(--severity-critical)]",
+  alta: "bg-[var(--severity-high)]",
+  media: "bg-[var(--severity-medium)]",
+  baja: "bg-[var(--severity-low)]",
+};
+
+/**
+ * Validación en tiempo real por tipo de recurso (a.md, "Mensajes de Error
+ * Claros e Inmediatos"). No se agregó Zod/React Hook Form como pedía el
+ * prompt original — es un solo formulario chico, un puñado de funciones
+ * puras alcanza sin sumar una dependencia nueva al frontend (Zod hoy solo
+ * lo usa el backend).
+ */
+function validateAssetValue(type: AssetType, value: string): "ip" | "cidr" | "domain" | "repository" | null {
+  const v = value.trim();
+  if (!v) return null;
+  const octet = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
+  const ipRe = new RegExp(`^${octet}(\\.${octet}){3}$`);
+  switch (type) {
+    case "ip":
+      return ipRe.test(v) ? null : "ip";
+    case "cidr": {
+      const [ip, prefix] = v.split("/");
+      const validPrefix = prefix !== undefined && /^\d{1,2}$/.test(prefix) && Number(prefix) <= 32;
+      return ip && ipRe.test(ip) && validPrefix ? null : "cidr";
+    }
+    case "domain":
+      return /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(v) ? null : "domain";
+    case "repository":
+      return /^https:\/\/[^\s]+\/[^\s]+$/i.test(v) ? null : "repository";
+    case "cloud_server":
+      return null;
+  }
+}
+
+/**
+ * Label + ícono de ayuda "?" (a.md, "iconos de ayuda"): el texto también
+ * queda siempre visible debajo del campo — el tooltip es un refuerzo, no
+ * la única vía para acceder a la explicación. `id` (en vez de `htmlFor`)
+ * es para el caso "leyenda de grupo" (ej. el RadioGroup de criticidad):
+ * un <label for> apunta a UN control puntual, así que un grupo se asocia
+ * en cambio vía `aria-labelledby` apuntando al `id` de este label.
+ */
+function FieldLabel({
+  htmlFor,
+  id,
+  label,
+  tooltip,
+}: {
+  htmlFor?: string;
+  id?: string;
+  label: string;
+  tooltip: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Label htmlFor={htmlFor} id={id}>
+        {label}
+      </Label>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            aria-label={tooltip}
+          >
+            <HelpCircle className="size-3.5" aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{tooltip}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
 
 export default function AssetsPage() {
   const { dict } = useI18n();
@@ -40,10 +121,28 @@ export default function AssetsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newType, setNewType] = useState<AssetType>("ip");
   const [newValue, setNewValue] = useState("");
+  const [valueTouched, setValueTouched] = useState(false);
   const [newCriticality, setNewCriticality] = useState<AssetCriticality>("media");
-  const [newTags, setNewTags] = useState("");
+  const [selectedTagChips, setSelectedTagChips] = useState<string[]>([]);
+  const [customTags, setCustomTags] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const valueErrorKey = validateAssetValue(newType, newValue);
+
+  function resetAssetForm() {
+    setNewType("ip");
+    setNewValue("");
+    setValueTouched(false);
+    setNewCriticality("media");
+    setSelectedTagChips([]);
+    setCustomTags("");
+    setFormError(null);
+  }
+
+  function toggleTagChip(key: string) {
+    setSelectedTagChips((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
 
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -52,6 +151,7 @@ export default function AssetsPage() {
   const [verifyDomainAsset, setVerifyDomainAsset] = useState<Asset | null>(null);
   const [verifyDomainError, setVerifyDomainError] = useState<string | null>(null);
   const [tokenCopied, setTokenCopied] = useState(false);
+  const [hostCopied, setHostCopied] = useState(false);
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateEmail, setDelegateEmail] = useState("");
   const [delegateSending, setDelegateSending] = useState(false);
@@ -70,6 +170,42 @@ export default function AssetsPage() {
     alta: t.criticalAlta,
     media: t.criticalMedia,
     baja: t.criticalBaja,
+  };
+  const CRITICALITY_IMPACT: Record<AssetCriticality, string> = {
+    critica: t.criticalCriticaImpact,
+    alta: t.criticalAltaImpact,
+    media: t.criticalMediaImpact,
+    baja: t.criticalBajaImpact,
+  };
+  const TYPE_DESCRIPTION: Record<AssetType, string> = {
+    ip: t.typeDescIp,
+    cidr: t.typeDescCidr,
+    domain: t.typeDescDomain,
+    repository: t.typeDescRepository,
+    cloud_server: t.typeDescCloudServer,
+  };
+  const VALUE_PLACEHOLDER: Record<AssetType, string> = {
+    ip: t.valuePlaceholderIp,
+    cidr: t.valuePlaceholderCidr,
+    domain: t.valuePlaceholderDomain,
+    repository: t.valuePlaceholderRepository,
+    cloud_server: t.valuePlaceholderCloudServer,
+  };
+  const VALUE_ERROR: Record<"ip" | "cidr" | "domain" | "repository", string> = {
+    ip: t.valueErrorIp,
+    cidr: t.valueErrorCidr,
+    domain: t.valueErrorDomain,
+    repository: t.valueErrorRepository,
+  };
+  const TAG_CHIP_LABEL: Record<(typeof TAG_CHIP_KEYS)[number], string> = {
+    production: t.tagChipProduction,
+    website: t.tagChipWebsite,
+    internal: t.tagChipInternal,
+    testing: t.tagChipTesting,
+    backend: t.tagChipBackend,
+    frontend: t.tagChipFrontend,
+    api: t.tagChipApi,
+    database: t.tagChipDatabase,
   };
 
   function loadAssets() {
@@ -93,21 +229,22 @@ export default function AssetsPage() {
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
+    setValueTouched(true);
+    if (validateAssetValue(newType, newValue) || !newValue.trim()) return;
+
     setFormError(null);
     setSaving(true);
     try {
-      await api.post("/api/v1/assets", {
-        type: newType,
-        value: newValue,
-        criticality: newCriticality,
-        tags: newTags
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      });
+      const chipTags = selectedTagChips.map((key) => TAG_CHIP_LABEL[key as (typeof TAG_CHIP_KEYS)[number]]);
+      const customTagList = customTags
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const tags = [...new Set([...chipTags, ...customTagList])];
+
+      await api.post("/api/v1/assets", { type: newType, value: newValue, criticality: newCriticality, tags });
       setDialogOpen(false);
-      setNewValue("");
-      setNewTags("");
+      resetAssetForm();
       loadAssets();
     } catch (err) {
       setFormError(getApiErrorMessage(err, t.createFailed));
@@ -145,6 +282,7 @@ export default function AssetsPage() {
     setVerifyDomainAsset(asset);
     setVerifyDomainError(null);
     setTokenCopied(false);
+    setHostCopied(false);
     setDelegateOpen(false);
     setDelegateEmail("");
     setDelegateError(null);
@@ -156,6 +294,17 @@ export default function AssetsPage() {
     navigator.clipboard.writeText(`aegis-site-verification=${verifyDomainAsset.verification_token}`).then(() => {
       setTokenCopied(true);
       setTimeout(() => setTokenCopied(false), 2000);
+    });
+  }
+
+  // El host siempre es "@" (raíz del dominio del activo) — no hay un campo
+  // de subdominio separado en el modelo de Asset hoy, así que no hace
+  // falta calcularlo dinámicamente (a.md: "@ o el subdominio
+  // correspondiente").
+  function handleCopyHost() {
+    navigator.clipboard.writeText("@").then(() => {
+      setHostCopied(true);
+      setTimeout(() => setHostCopied(false), 2000);
     });
   }
 
@@ -194,22 +343,29 @@ export default function AssetsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">{t.title}</h1>
 
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog
+          open={dialogOpen}
+          onOpenChange={(open) => {
+            setDialogOpen(open);
+            if (!open) resetAssetForm();
+          }}
+        >
           <DialogTrigger asChild>
             <Button>
               <Plus className="size-4" aria-hidden />
               {t.addAsset}
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{t.addAsset}</DialogTitle>
+              <DialogTitle>{t.modalTitle}</DialogTitle>
+              <DialogDescription>{t.modalIntro}</DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <form onSubmit={handleCreate} className="flex flex-col gap-5">
               <div className="flex flex-col gap-2">
-                <Label htmlFor="asset-type">{t.type}</Label>
+                <FieldLabel htmlFor="asset-type" label={t.type} tooltip={t.typeHelp} />
                 <Select value={newType} onValueChange={(v) => setNewType(v as AssetType)}>
-                  <SelectTrigger id="asset-type" className="w-full">
+                  <SelectTrigger id="asset-type" className="w-full" aria-describedby="asset-type-desc">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -220,40 +376,93 @@ export default function AssetsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <p id="asset-type-desc" className="text-xs text-muted-foreground">
+                  {TYPE_DESCRIPTION[newType]}
+                </p>
               </div>
+
               <div className="flex flex-col gap-2">
-                <Label htmlFor="asset-value">{t.value}</Label>
+                <FieldLabel htmlFor="asset-value" label={t.value} tooltip={t.valueHelp} />
                 <Input
                   id="asset-value"
                   required
                   value={newValue}
                   onChange={(e) => setNewValue(e.target.value)}
-                  placeholder={t.valuePlaceholder}
+                  onBlur={() => setValueTouched(true)}
+                  placeholder={VALUE_PLACEHOLDER[newType]}
+                  aria-invalid={valueTouched && (!!valueErrorKey || !newValue.trim())}
+                  aria-describedby={valueTouched && valueErrorKey ? "asset-value-error" : "asset-value-desc"}
                 />
+                {valueTouched && valueErrorKey ? (
+                  <p id="asset-value-error" role="alert" className="text-xs font-medium text-destructive">
+                    {VALUE_ERROR[valueErrorKey]}
+                  </p>
+                ) : valueTouched && !newValue.trim() ? (
+                  <p id="asset-value-error" role="alert" className="text-xs font-medium text-destructive">
+                    {t.valueErrorRequired}
+                  </p>
+                ) : (
+                  <p id="asset-value-desc" className="text-xs text-muted-foreground">
+                    {t.valueHelp}
+                  </p>
+                )}
               </div>
+
               <div className="flex flex-col gap-2">
-                <Label htmlFor="asset-criticality">{t.criticality}</Label>
-                <Select value={newCriticality} onValueChange={(v) => setNewCriticality(v as AssetCriticality)}>
-                  <SelectTrigger id="asset-criticality" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CRITICALITIES.map((c) => (
-                      <SelectItem key={c} value={c}>
+                <FieldLabel id="asset-criticality-label" label={t.criticality} tooltip={t.criticalityHelp} />
+                <RadioGroup
+                  value={newCriticality}
+                  onValueChange={(v) => setNewCriticality(v as AssetCriticality)}
+                  aria-labelledby="asset-criticality-label"
+                  className="grid gap-2 sm:grid-cols-2"
+                >
+                  {CRITICALITIES.map((c) => (
+                    <RadioGroupItem key={c} value={c} id={`asset-criticality-${c}`} className="flex flex-col gap-1 p-3">
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        <span className={cn("size-2.5 shrink-0 rounded-full", CRITICALITY_DOT[c])} aria-hidden />
                         {CRITICALITY_LABEL[c]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      </span>
+                      <span className="text-xs text-muted-foreground">{CRITICALITY_IMPACT[c]}</span>
+                    </RadioGroupItem>
+                  ))}
+                </RadioGroup>
               </div>
+
               <div className="flex flex-col gap-2">
-                <Label htmlFor="asset-tags">{t.tags}</Label>
-                <Input
-                  id="asset-tags"
-                  value={newTags}
-                  onChange={(e) => setNewTags(e.target.value)}
-                  placeholder={t.tagsPlaceholder}
-                />
+                <FieldLabel label={t.tags} tooltip={t.tagsHelp} />
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label={t.tags}>
+                  {TAG_CHIP_KEYS.map((key) => {
+                    const pressed = selectedTagChips.includes(key);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={pressed}
+                        onClick={() => toggleTagChip(key)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                          pressed
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-input bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                      >
+                        {pressed ? "✓ " : "+ "}
+                        {TAG_CHIP_LABEL[key]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <Label htmlFor="asset-custom-tags" className="text-xs text-muted-foreground">
+                    {t.tagsCustomLabel}
+                  </Label>
+                  <Input
+                    id="asset-custom-tags"
+                    value={customTags}
+                    onChange={(e) => setCustomTags(e.target.value)}
+                    placeholder={t.tagsCustomPlaceholder}
+                  />
+                </div>
               </div>
 
               {formError && (
@@ -263,7 +472,18 @@ export default function AssetsPage() {
               )}
 
               <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setDialogOpen(false);
+                    resetAssetForm();
+                  }}
+                >
+                  {t.cancel}
+                </Button>
                 <Button type="submit" disabled={saving}>
+                  {saving && <Loader2 className="size-4 animate-spin" aria-hidden />}
                   {saving ? t.saving : t.save}
                 </Button>
               </DialogFooter>
@@ -401,21 +621,40 @@ export default function AssetsPage() {
               <div className="flex flex-col gap-4">
                 <p className="rounded-md border bg-muted/50 p-3 text-sm">{t.verifyDomainIntro}</p>
 
-                <div className="flex flex-col gap-2">
-                  <Label>{t.verifyDomainTokenLabel}</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      readOnly
-                      value={`aegis-site-verification=${verifyDomainAsset.verification_token ?? ""}`}
-                      className="font-mono text-xs"
-                      onFocus={(e) => e.target.select()}
-                    />
-                    <Button type="button" variant="outline" size="sm" onClick={handleCopyToken}>
-                      {tokenCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
-                      {tokenCopied ? t.copied : t.copyCode}
-                    </Button>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-2">
+                    <Label>{t.verifyDomainHostLabel}</Label>
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-1 items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono font-medium text-muted-foreground">
+                          {t.verifyDomainTypeLabel}
+                        </span>
+                        <span className="font-mono">@</span>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={handleCopyHost}>
+                        {hostCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+                        {hostCopied ? t.copied : t.copyHost}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <Label>{t.verifyDomainTokenLabel}</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        readOnly
+                        value={`aegis-site-verification=${verifyDomainAsset.verification_token ?? ""}`}
+                        className="truncate font-mono text-xs"
+                        onFocus={(e) => e.target.select()}
+                      />
+                    </div>
                   </div>
                 </div>
+
+                <Button type="button" variant="secondary" onClick={handleCopyToken} className="self-start">
+                  {tokenCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+                  {tokenCopied ? t.copied : t.copyValue}
+                </Button>
 
                 <div className="flex flex-col gap-2">
                   <p className="text-sm font-medium">{t.verifyDomainStepsTitle}</p>
@@ -425,6 +664,7 @@ export default function AssetsPage() {
                     <li>{t.verifyDomainStep3}</li>
                     <li>{t.verifyDomainStep4}</li>
                   </ol>
+                  <p className="text-xs text-muted-foreground">{t.verifyDomainPropagationNote}</p>
                 </div>
 
                 {verifyDomainError && (
@@ -449,7 +689,11 @@ export default function AssetsPage() {
                     {t.delegateToIt}
                   </Button>
                   <Button type="button" disabled={busyId === verifyDomainAsset.id} onClick={handleVerifyDomainNow}>
-                    <ShieldCheck className="size-3.5" aria-hidden />
+                    {busyId === verifyDomainAsset.id ? (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <ShieldCheck className="size-3.5" aria-hidden />
+                    )}
                     {busyId === verifyDomainAsset.id ? t.verifying : t.verifyNow}
                   </Button>
                 </DialogFooter>
