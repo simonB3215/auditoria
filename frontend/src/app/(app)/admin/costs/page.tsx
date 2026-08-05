@@ -18,6 +18,7 @@ import {
   YAxis,
 } from "recharts";
 import { ArrowLeft, DollarSign, Layers, Settings2, TrendingUp, Trophy } from "lucide-react";
+import { FinOpsTabs } from "@/components/finops-tabs";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type {
   AuditCostRow,
@@ -34,6 +35,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -56,7 +58,20 @@ const CATEGORY_COLOR: Record<CostCategoryKey, string> = {
 };
 
 const clpFormatter = new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 });
-const creditsFormatter = new Intl.NumberFormat("es-CL", { maximumFractionDigits: 1 });
+// Los créditos valen 100 CLP cada uno por defecto (ver pricing_config,
+// `credit_value_clp`), así que montos chicos de uso real quedan por debajo
+// de 1 crédito — con un solo decimal redondeaban a "0,0" y perdían todo
+// significado. Dos decimales siempre visibles (no solo como máximo) para
+// que el monto real siga siendo legible.
+const creditsFormatter = new Intl.NumberFormat("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Los precios unitarios en USD son fracciones de centavo (ej. 0.0005 por
+// escaneo) — su equivalente en CLP puede ser menor a $1, así que necesita
+// más precisión que el formateador de montos totales (`clpFormatter`).
+const clpUnitPriceFormatter = new Intl.NumberFormat("es-CL", {
+  style: "currency",
+  currency: "CLP",
+  maximumFractionDigits: 4,
+});
 
 function formatClp(value: number): string {
   return clpFormatter.format(value);
@@ -64,6 +79,10 @@ function formatClp(value: number): string {
 
 function formatCredits(value: number): string {
   return creditsFormatter.format(value);
+}
+
+function formatClpUnitPrice(value: number): string {
+  return clpUnitPriceFormatter.format(value);
 }
 
 function StatCard({
@@ -221,6 +240,8 @@ export default function AdminCostsPage() {
           </Button>
         </div>
       </div>
+
+      <FinOpsTabs />
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-4">
@@ -423,19 +444,19 @@ export default function AdminCostsPage() {
                   <Label htmlFor="provider" className="text-xs">
                     {t.filterProvider}
                   </Label>
-                  <select
-                    id="provider"
-                    className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
-                    value={providerFilter}
-                    onChange={(e) => setProviderFilter(e.target.value as CostCategoryKey | "all")}
-                  >
-                    <option value="all">{t.filterAllProviders}</option>
-                    {CATEGORY_ORDER.map((key) => (
-                      <option key={key} value={key}>
-                        {(t as Record<string, string>)[`service_${key}`]}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={providerFilter} onValueChange={(v) => setProviderFilter(v as CostCategoryKey | "all")}>
+                    <SelectTrigger id="provider" size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">{t.filterAllProviders}</SelectItem>
+                      {CATEGORY_ORDER.map((key) => (
+                        <SelectItem key={key} value={key}>
+                          {(t as Record<string, string>)[`service_${key}`]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <Button size="sm" variant="outline" className="h-8" onClick={() => loadAll(fromFilter, toFilter)}>
                   {t.applyFilters}
@@ -518,24 +539,45 @@ export default function AdminCostsPage() {
                 </Alert>
               )}
               <div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
-                {pricingRows.map((row) => (
-                  <div key={row.key} className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {row.provider} · {row.service}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">{row.unit}</p>
+                {pricingRows.map((row) => {
+                  // fx_usd_clp y credit_value_clp ya están denominadas en
+                  // CLP (son la tasa de cambio y el valor del crédito, no un
+                  // precio unitario de proveedor) — no tiene sentido
+                  // mostrarles un "equivalente en CLP" de sí mismas.
+                  const isCurrencyRow = row.provider === "fx" || row.provider === "credits";
+                  const draftValue = Number(pricingDrafts[row.key]);
+                  const fxDraft = Number(pricingDrafts["fx_usd_clp"]);
+                  const equivalentClp =
+                    !isCurrencyRow && Number.isFinite(draftValue) && Number.isFinite(fxDraft)
+                      ? draftValue * fxDraft
+                      : null;
+                  return (
+                    <div key={row.key} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {row.provider} · {row.service}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">{row.unit}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.0001"
+                            className="h-8 w-28 text-right text-xs"
+                            value={pricingDrafts[row.key] ?? ""}
+                            onChange={(e) => setPricingDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                          />
+                          {!isCurrencyRow && <span className="text-[10px] text-muted-foreground">USD</span>}
+                        </div>
+                        {equivalentClp !== null && (
+                          <span className="text-[10px] text-muted-foreground">≈ {formatClpUnitPrice(equivalentClp)}</span>
+                        )}
+                      </div>
                     </div>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.0001"
-                      className="h-8 w-28 text-right text-xs"
-                      value={pricingDrafts[row.key] ?? ""}
-                      onChange={(e) => setPricingDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                    />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <Button onClick={savePricing} disabled={pricingSaving} className="self-start">
                 {pricingSaving ? t.saving : t.save}

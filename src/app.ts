@@ -16,7 +16,8 @@ import { adminRouter } from "./routes/admin.js";
 import { adminCostsRouter } from "./routes/adminCosts.js";
 import { auditLogsRouter } from "./routes/auditLogs.js";
 import { settingsRouter } from "./routes/settings.js";
-import { invitationsRouter } from "./routes/invitations.js";
+import { internalFinopsRouter } from "./routes/internalFinops.js";
+import { adminKpisRouter } from "./routes/adminKpis.js";
 
 export function createApp(): Express {
   const app = express();
@@ -42,7 +43,8 @@ export function createApp(): Express {
   app.use("/api/v1", adminCostsRouter);
   app.use("/api/v1", auditLogsRouter);
   app.use("/api/v1", settingsRouter);
-  app.use("/api/v1", invitationsRouter);
+  app.use("/api/v1", internalFinopsRouter);
+  app.use("/api/v1", adminKpisRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

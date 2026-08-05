@@ -1,40 +1,24 @@
 "use client";
 
-import { useEffect, useState, Suspense, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { api, getApiErrorMessage } from "@/lib/api";
-import type { InvitationPreview } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Skeleton } from "@/components/ui/skeleton";
 import { GoogleSignInButton } from "@/components/google-signin-button";
 import { LanguageSwitcher } from "@/components/language-switcher";
 
 export default function RegisterPage() {
-  return (
-    <Suspense fallback={null}>
-      <RegisterForm />
-    </Suspense>
-  );
-}
-
-function RegisterForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const inviteToken = searchParams.get("invite");
   const { dict } = useI18n();
   const t = dict.auth.register;
-
-  const [invitePreview, setInvitePreview] = useState<InvitationPreview | null>(null);
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [checkingInvite, setCheckingInvite] = useState(Boolean(inviteToken));
 
   const [organizationName, setOrganizationName] = useState("");
   const [fullName, setFullName] = useState("");
@@ -44,30 +28,13 @@ function RegisterForm() {
   const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!inviteToken) return;
-    api
-      .get<{ data: InvitationPreview }>(`/api/v1/invitations/${inviteToken}`)
-      .then((res) => {
-        setInvitePreview(res.data.data);
-        if (res.data.data.email) setEmail(res.data.data.email);
-      })
-      .catch((err) => setInviteError(getApiErrorMessage(err, t.invalidInvite)))
-      .finally(() => setCheckingInvite(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inviteToken]);
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
     const supabase = createClient();
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: inviteToken ? { data: { invite_token: inviteToken } } : undefined,
-    });
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
 
     if (signUpError) {
       setLoading(false);
@@ -79,12 +46,6 @@ function RegisterForm() {
       // El proyecto Supabase exige confirmar el email antes de emitir sesión.
       setLoading(false);
       setNeedsEmailConfirmation(true);
-      return;
-    }
-
-    if (inviteToken) {
-      router.push("/onboarding");
-      router.refresh();
       return;
     }
 
@@ -123,8 +84,6 @@ function RegisterForm() {
     );
   }
 
-  const invited = Boolean(inviteToken && invitePreview && !inviteError);
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
       <div className="absolute right-4 top-4">
@@ -133,33 +92,20 @@ function RegisterForm() {
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center">
           <ShieldCheck className="mb-2 size-8 text-primary" aria-hidden />
-          <CardTitle>{invited ? t.invitedTitle : t.title}</CardTitle>
-          <CardDescription>
-            {invited ? `${t.invitedSubtitle} ${invitePreview!.organizationName}` : t.subtitle}
-          </CardDescription>
+          <CardTitle>{t.title}</CardTitle>
+          <CardDescription>{t.subtitle}</CardDescription>
         </CardHeader>
         <CardContent>
-          {checkingInvite ? (
-            <Skeleton className="h-40" />
-          ) : (
-            <>
-              {inviteError && (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertDescription>{inviteError}</AlertDescription>
-                </Alert>
-              )}
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                {!invited && (
-                  <div className="flex flex-col gap-2">
-                    <Label htmlFor="organizationName">{t.organizationName}</Label>
-                    <Input
-                      id="organizationName"
-                      required
-                      value={organizationName}
-                      onChange={(e) => setOrganizationName(e.target.value)}
-                    />
-                  </div>
-                )}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="organizationName">{t.organizationName}</Label>
+              <Input
+                id="organizationName"
+                required
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+              />
+            </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="fullName">{t.fullName}</Label>
               <Input id="fullName" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
@@ -194,32 +140,26 @@ function RegisterForm() {
               </Alert>
             )}
 
-                <Button type="submit" disabled={loading} className="w-full">
-                  {loading ? t.submitting : t.submit}
-                </Button>
-              </form>
+            <Button type="submit" disabled={loading} className="w-full">
+              {loading ? t.submitting : t.submit}
+            </Button>
+          </form>
 
-              {!invited && (
-                <>
-                  <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
-                    <div className="h-px flex-1 bg-border" />
-                    {dict.common.or}
-                    <div className="h-px flex-1 bg-border" />
-                  </div>
+          <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />
+            {dict.common.or}
+            <div className="h-px flex-1 bg-border" />
+          </div>
 
-                  <GoogleSignInButton />
-                  <p className="mt-2 text-center text-xs text-muted-foreground">{t.googleHint}</p>
-                </>
-              )}
+          <GoogleSignInButton />
+          <p className="mt-2 text-center text-xs text-muted-foreground">{t.googleHint}</p>
 
-              <p className="mt-4 text-center text-sm text-muted-foreground">
-                {t.hasAccount}{" "}
-                <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
-                  {t.loginLink}
-                </Link>
-              </p>
-            </>
-          )}
+          <p className="mt-4 text-center text-sm text-muted-foreground">
+            {t.hasAccount}{" "}
+            <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
+              {t.loginLink}
+            </Link>
+          </p>
         </CardContent>
       </Card>
     </div>

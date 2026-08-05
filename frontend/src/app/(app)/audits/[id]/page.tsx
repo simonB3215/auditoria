@@ -219,6 +219,9 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
                         {t.requirementPrefix} {ev.requirement_code}
                       </span>
                     )}
+                    <span className="text-xs text-muted-foreground">
+                      {t.uploadedByPrefix} {ev.uploader_name ?? t.deletedUser}
+                    </span>
                   </div>
                   <span
                     className={

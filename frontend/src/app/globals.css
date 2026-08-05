@@ -95,6 +95,11 @@
   --cost-scan-engine: #eda100;
   --cost-pdf-engine: #e87ba4;
   --cost-hosting: #008300;
+
+  /* Serie de la proyección financiera interna (FinOps) - orden fijo. */
+  --finops-revenue: #2a78d6;
+  --finops-costs: #d03b3b;
+  --finops-profit: #1baf7a;
 }
 
 .dark {
@@ -136,6 +141,10 @@
   --cost-scan-engine: #c98500;
   --cost-pdf-engine: #d55181;
   --cost-hosting: #008300;
+
+  --finops-revenue: #3987e5;
+  --finops-costs: #e05252;
+  --finops-profit: #199e70;
 }
 
 @layer base {

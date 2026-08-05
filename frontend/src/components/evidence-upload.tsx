@@ -8,6 +8,7 @@ import type { ComplianceRequirement, EvidenceUploadResponse } from "@/lib/types"
 import { useI18n } from "@/lib/i18n/context";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 interface EvidenceUploadProps {
@@ -76,18 +77,18 @@ export function EvidenceUpload({ auditId, requirements, onUploaded }: EvidenceUp
       {requirements.length > 0 && (
         <div className="flex flex-col gap-2">
           <Label htmlFor="requirement">{t.requirementLabel}</Label>
-          <select
-            id="requirement"
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-            value={requirementCode}
-            onChange={(e) => setRequirementCode(e.target.value)}
-          >
-            {requirements.map((r) => (
-              <option key={r.code} value={r.code}>
-                [{r.code}] {r.title}
-              </option>
-            ))}
-          </select>
+          <Select value={requirementCode} onValueChange={setRequirementCode}>
+            <SelectTrigger id="requirement" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {requirements.map((r) => (
+                <SelectItem key={r.code} value={r.code}>
+                  [{r.code}] {r.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 

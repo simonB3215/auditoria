@@ -9,20 +9,6 @@ export interface Profile {
   expiresAt: string | null;
 }
 
-export interface InviteLink {
-  url: string;
-  email: string | null;
-  role: "auditor" | "auditor_guest";
-  temporaryAccessDays: number | null;
-  linkExpiresAt: string;
-}
-
-export interface InvitationPreview {
-  organizationName: string | null;
-  role: "auditor" | "auditor_guest";
-  email: string | null;
-}
-
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";
 export type Framework = "iso27001" | "nist_csf" | "gdpr" | "local_dp_law" | "ley_21663_cl";
 
@@ -47,6 +33,8 @@ export interface Asset {
   criticality: AssetCriticality;
   tags: string[];
   verification_status: AssetVerificationStatus;
+  /** Código a publicar en el TXT del dominio. Solo tiene sentido para type === "domain". */
+  verification_token?: string;
   verified_at: string | null;
   created_at: string;
 }
@@ -77,6 +65,8 @@ export interface Evidence {
   validation_status: EvidenceValidationStatus;
   validation_errors: string[] | null;
   created_at: string;
+  /** null si quien la subió ya no tiene perfil (borrado) — ver migración 018. */
+  uploader_name: string | null;
 }
 
 export interface CoverageResult {
@@ -152,28 +142,44 @@ export interface DashboardSummary {
   recentAudits: Audit[];
 }
 
+export type OrganizationPlan = "starter" | "pro" | "custom";
+
 export interface AdminOrganization {
   id: string;
   name: string;
+  rut: string | null;
+  plan: OrganizationPlan;
   is_suspended: boolean;
   created_at: string;
-  memberCount: number;
   auditCount: number;
   storageBytes: number;
+  primaryDomain: string | null;
+  domainStats: { total: number; verified: number };
 }
 
-export interface AdminMember {
+export interface AdminUser {
   id: string;
-  full_name: string | null;
+  fullName: string | null;
+  email: string | null;
   role: UserRole;
-  is_platform_admin: boolean;
-  created_at: string;
+  isPlatformAdmin: boolean;
+  organizationId: string;
+  organizationName: string | null;
+  createdAt: string;
+  isDeactivated: boolean;
 }
 
 export interface AdminActivityEvent {
   type: "audit_created" | "asset_created" | "evidence_uploaded";
   label: string;
   createdAt: string;
+}
+
+export interface AdminOrgDomain {
+  id: string;
+  value: string;
+  verification_status: AssetVerificationStatus;
+  created_at: string;
 }
 
 export type CostCategoryKey =
@@ -280,4 +286,107 @@ export interface RetentionSettings {
   totalEvidences: number;
   purgedEvidences: number;
   eligibleForPurge: number;
+}
+
+export interface EconomicIndicators {
+  ufValue: number;
+  utmValue: number;
+  dolarValue: number;
+  fetchedAt: string;
+  /** true si Mindicador.cl no respondió en la última corrida y se está usando el último valor guardado. */
+  stale: boolean;
+}
+
+export interface ProjectionInputs {
+  startersCount: number;
+  proCount: number;
+  starterPriceUf: number;
+  proPriceUf: number;
+  costVarUsdPerClient: number;
+  opexUsd: number;
+  marketPenetrationPct: number;
+}
+
+export interface MonthlyProjectionPoint {
+  month: number;
+  revenueClp: number;
+  costsClp: number;
+  netProfitClp: number;
+}
+
+export interface ProjectionResult {
+  totalClients: number;
+  mrrClp: number;
+  mrrUf: number;
+  arrClp: number;
+  cogsClp: number;
+  opexClp: number;
+  netProfitClp: number;
+  netMarginPct: number;
+  breakEvenClients: number | null;
+  addressableClients: number;
+  monthlyProjection: MonthlyProjectionPoint[];
+}
+
+export interface InternalFinopsProjection {
+  indicators: EconomicIndicators;
+  inputs: ProjectionInputs;
+  addressableMarket: { totalCompanies: number; penetrationPct: number; potentialClients: number };
+  projection: ProjectionResult;
+}
+
+export type KpiPeriod = "current_month" | "last_quarter" | "year_to_date";
+
+export interface RealKpiFinancial {
+  mrrRealClp: number;
+  arrRealClp: number;
+  arpuClp: number | null;
+  cogsRealClp: number;
+  grossMarginPct: number | null;
+  payingOrganizations: number;
+  billingConnected: boolean;
+}
+
+export interface RealKpiFunnel {
+  totalOrganizations: number;
+  trialOrganizations: number;
+  payingOrganizations: number;
+  trialToPaidConversionPct: number | null;
+  churnRatePct: number | null;
+  addressableMarket: { totalCompanies: number; penetrationPct: number };
+}
+
+export interface RealKpiOperational {
+  totalDomainAssets: number;
+  verifiedDomainAssets: number;
+  domainVerificationRatePct: number | null;
+  auditsCompleted: number;
+  scanRunsCompleted: number;
+  criticalFindingsDetected: number;
+  itDelegationEmailsSent: number;
+}
+
+export interface DailyActivityPoint {
+  date: string;
+  scansCompleted: number;
+  criticalFindings: number;
+}
+
+export type OrganizationSegment = "trial_active" | "trial_expired" | "standard";
+
+export interface SubscriptionSummaryRow {
+  organizationId: string;
+  organizationName: string;
+  segment: OrganizationSegment;
+  createdAt: string;
+  trialExpiresAt: string | null;
+}
+
+export interface RealKpiReport {
+  period: { key: KpiPeriod; from: string; to: string };
+  financial: RealKpiFinancial;
+  funnel: RealKpiFunnel;
+  operational: RealKpiOperational;
+  dailyActivity: DailyActivityPoint[];
+  subscriptions: SubscriptionSummaryRow[];
 }

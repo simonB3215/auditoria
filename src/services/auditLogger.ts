@@ -5,6 +5,9 @@ import { supabaseAdmin } from "../config/supabase.js";
  * Acciones instrumentadas. No es un enum de BD (audit_logs.action es
  * `text` libre) para no requerir una migración cada vez que se agrega un
  * evento nuevo — esta lista es la referencia de qué valores existen hoy.
+ * (El sistema de invitación por link se eliminó — filas históricas de
+ * `audit_logs` pueden seguir teniendo `USER_INVITED`/`INVITATION_ACCEPTED`,
+ * pero ya no se generan nuevas.)
  */
 export const AUDIT_ACTIONS = {
   EVIDENCE_UPLOADED: "EVIDENCE_UPLOADED",
@@ -16,14 +19,18 @@ export const AUDIT_ACTIONS = {
   ORGANIZATION_DELETED: "ORGANIZATION_DELETED",
   RETENTION_POLICY_UPDATED: "RETENTION_POLICY_UPDATED",
   EVIDENCE_PURGED: "EVIDENCE_PURGED",
-  USER_INVITED: "USER_INVITED",
-  INVITATION_ACCEPTED: "INVITATION_ACCEPTED",
   GUEST_ROLE_EXPIRED: "GUEST_ROLE_EXPIRED",
   SCAN_EXECUTED: "SCAN_EXECUTED",
+  UNAUTHORIZED_SCAN_BLOCKED: "UNAUTHORIZED_SCAN_BLOCKED",
+  DOMAIN_VERIFICATION_EMAIL_SENT: "DOMAIN_VERIFICATION_EMAIL_SENT",
+  USER_ORGANIZATION_CHANGED: "USER_ORGANIZATION_CHANGED",
+  ORGANIZATION_UPDATED: "ORGANIZATION_UPDATED",
+  USER_ACCOUNT_DEACTIVATED: "USER_ACCOUNT_DEACTIVATED",
+  USER_ACCOUNT_REACTIVATED: "USER_ACCOUNT_REACTIVATED",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
-export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan";
+export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan" | "asset";
 
 interface LogAuditEventParams {
   organizationId: string;

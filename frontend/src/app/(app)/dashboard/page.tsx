@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AuditStatusBadge } from "@/components/audit-status-badge";
 import { SeverityDistribution } from "@/components/severity-distribution";
 import type { Framework } from "@/lib/types";
@@ -143,18 +144,18 @@ export default function DashboardPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="framework">{t.framework}</Label>
-                <select
-                  id="framework"
-                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-                  value={newAuditFramework}
-                  onChange={(e) => setNewAuditFramework(e.target.value as Framework)}
-                >
-                  {FRAMEWORKS.map((f) => (
-                    <option key={f.value} value={f.value}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
+                <Select value={newAuditFramework} onValueChange={(v) => setNewAuditFramework(v as Framework)}>
+                  <SelectTrigger id="framework" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FRAMEWORKS.map((f) => (
+                      <SelectItem key={f.value} value={f.value}>
+                        {f.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {createError && (

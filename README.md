@@ -125,6 +125,7 @@ URLs de Supabase.
 | `npm run typecheck` | Solo chequeo de tipos |
 | `npm run worker:scan` | Worker que consume la cola de escaneos |
 | `npm run worker:retention` | Worker que purga evidencias vencidas (corre diario vía BullMQ Job Scheduler; también se puede disparar manual con `POST /admin/retention/run-now`) |
+| `npm run worker:economic-indicators` | Worker que refresca UF/UTM/Dólar desde Mindicador.cl (corre diario a las 08:00 America/Santiago vía BullMQ Job Scheduler; el endpoint del panel también refresca al vuelo si el caché tiene más de 1h) |
 | `npm run db:migrate` | Aplica `schema.sql` + migraciones pendientes |
 | `npm run storage:setup` | Crea los buckets de Storage si no existen |
 | `npm run admin:promote -- email` | Otorga `platform_admin` a un usuario ya registrado |
@@ -163,6 +164,108 @@ URLs de Supabase.
   organización (`PATCH /admin/organizations/:id/suspend`); sus usuarios
   pierden acceso a la API hasta reactivarla (el propio platform admin nunca
   queda bloqueado por esto).
+- **Gestión directa de usuarios (`/admin`, modal de organización)**: cada
+  quien se registra crea su propia organización (`POST /onboarding/organization`,
+  ver `/register`) — no existe ningún flujo de invitación. Para llevar a un
+  usuario que ya tiene cuenta a la organización correcta (ej. sacarlo de la
+  organización personal que se le creó al registrarse y moverlo a la
+  corporativa), un platform admin lo reasigna directamente desde `/admin`
+  con un selector inline ("Mover a...") — efecto inmediato, sin invitación
+  ni correo (`POST /admin/users/assign-organization`). El cambio de rol y
+  de `is_platform_admin` usa el mismo patrón (`POST /admin/users/role`).
+- **Borrar una organización no queda bloqueado por su historial**: borrar
+  un perfil (directo o en cascada al borrar su organización) no debe
+  romper la integridad referencial de lo que ese usuario generó —
+  evidencias, activos, auditorías, reportes y revisiones de hallazgos
+  necesitan sobrevivir para la trazabilidad de la Ley 21.663, aunque quien
+  los creó ya no exista. Las columnas `audit_evidences.uploaded_by`,
+  `assets.created_by`, `audits.created_by`, `reports.generated_by` y
+  `findings.reviewed_by` son nullable con `on delete set null` (migración
+  `018_fix_profile_deletion_fks.sql`) — antes de esta migración, ninguna
+  tenía una regla `ON DELETE` explícita (Postgres usa `NO ACTION` por
+  defecto), así que borrar una organización con evidencia cargada fallaba
+  de forma intermitente con `foreign key constraint
+  "audit_evidences_uploaded_by_fkey"` (Postgres no garantiza el orden entre
+  ramas hermanas de una cascada). `DELETE /admin/organizations/:id`
+  también traduce cualquier violación de FK (`23503`) restante a un 409
+  con mensaje claro en vez de filtrar el error crudo de Postgres. La lista
+  de evidencias (`/audits/:id`) muestra "Usuario eliminado / Sistema" en
+  vez de romperse cuando el que subió el archivo ya no tiene perfil.
+
+### Panel de administración (`/admin`) — Command Center
+Rediseño completo del panel de plataforma (a.md, "Rediseño y reestructuración
+completa del Dashboard de Administración") con navegación por sidebar
+colapsable y las organizaciones desacopladas de la gestión de usuarios.
+- **Layout** (`frontend/src/app/(app)/admin/layout.tsx`): sidebar fijo
+  agrupado en 4 categorías (General, Gestión, Operaciones & Seguridad,
+  Finanzas & FinOps), colapsable y persistido en `localStorage`. El guard
+  de `is_platform_admin` vive acá una sola vez para todo el módulo en vez
+  de repetirse en cada página.
+- **Buscador universal (`Cmd/Ctrl+K`)**: filtra en el cliente contra un
+  índice liviano de organizaciones + usuarios ya cargado (`GET
+  /admin/organizations` + `GET /admin/users`, sin paginar — a esta escala
+  alcanza). Es una adaptación honesta del "Cmd+K" que pedía el prompt
+  original: no hay un índice de búsqueda ni un command palette de verdad,
+  es un filtro por substring sobre los datos que el panel ya tiene
+  cargados, con resultados que llevan a la página correspondiente.
+- **Badges de estado del sistema**: "Workers" hace un `PING` real a Redis
+  (la misma conexión que usan los workers de BullMQ) y "APIs" reutiliza el
+  flag `stale` de los indicadores económicos (`GET
+  /admin/system-status`) — señales reales, no simuladas, reutilizando
+  infraestructura que ya existía en vez de montar un sistema de monitoreo
+  nuevo.
+- **Modo oscuro/claro**: toggle real (`ThemeProvider`,
+  `frontend/src/lib/theme/context.tsx`) que agrega/quita la clase `dark`
+  en `<html>` y persiste en `localStorage` — mismo patrón que
+  `I18nProvider`. Un script inline bloqueante en `app/layout.tsx` aplica
+  el tema guardado antes de la primera pintura para evitar flash de
+  contenido sin estilo.
+- **Toasts**: sistema propio (`frontend/src/hooks/use-toast.tsx`, sin
+  dependencias externas) para confirmar acciones exitosas — los errores
+  siguen mostrándose con el `Alert` en la propia página, consistente con
+  el resto de la plataforma.
+- **`/admin` (Resumen)**: 4 tarjetas con datos 100% reales (organizaciones
+  registradas, dominios verificados, MRR real, auditorías del mes —
+  reutiliza directamente `GET /admin/kpis/real-metrics`), un gráfico de
+  actividad reciente, y una tarjeta de alertas operativas construida con
+  señales reales (organizaciones suspendidas, dominios pendientes de
+  verificación, intentos de escaneo no autorizado bloqueados
+  recientemente) — no hay indicadores de tendencia (+/-) inventados: no
+  existe ningún snapshot histórico guardado para calcular una variación
+  real, así que se muestran los valores absolutos del periodo actual.
+- **`/admin/organizations`**: las organizaciones pasan a ser una entidad
+  de empresa pura — nombre, RUT, dominio principal, plan, estado de
+  verificación DNS, sin ninguna columna ni conteo de usuarios en la fila
+  (`organizations.rut` y `organizations.plan`, migración
+  `019_organization_entity_fields.sql`). `plan` es una **etiqueta**
+  administrativa editable (`starter`/`pro`/`custom`), no una suscripción
+  real — no hay pasarela de pagos conectada, mismo criterio que
+  `is_suspended`. Acciones por fila: editar (`PATCH
+  /admin/organizations/:id`), archivar/reactivar (reusa `.../suspend`),
+  ver detalle (dominios + actividad reciente vía `GET
+  /admin/organizations/:id/domains` y `.../activity`), eliminar.
+- **`/admin/users`**: gestión global de usuarios, desacoplada de la tabla
+  de organizaciones (`GET /admin/users`, cruza `profiles` con `auth.users`
+  vía la Admin API de Supabase para traer el email real). Acciones por
+  fila: cambiar rol, otorgar/quitar `platform_admin`, reasignar
+  organización (mismo mecanismo que ya existía,
+  `POST /admin/users/assign-organization`), y **desactivar/reactivar
+  cuenta** — nuevo (`POST /admin/users/deactivate`): usa el "ban" nativo
+  de Supabase Auth (bloquea el login de inmediato, verificado end-to-end)
+  en vez de un flag propio que habría que duplicar en `authenticateToken`.
+- **FinOps unificado bajo tabs**: `/admin/costs` y `/admin/internal-finops`
+  siguen siendo dos páginas independientes (cada una con su propio estado
+  y fetching, uno mide gasto real y el otro simula ingresos) pero ahora
+  comparten un selector visual tipo Tabs (`FinOpsTabs`) que navega entre
+  ambas sin volver al panel principal — una fusión real en una sola página
+  con un único árbol de estado habría sido mucho más invasiva sin agregar
+  valor real.
+- **Desviación de a.md**: el prompt original pedía un ítem de nav
+  "Auditorías y Escaneos" separado de "Audit Logs & Trazabilidad" dentro
+  de Operaciones & Seguridad — no existe ninguna vista administrativa
+  global de auditorías/escaneos (las auditorías se gestionan por
+  organización, no desde un panel admin), así que ese ítem quedó afuera en
+  vez de crear una página nueva sin datos reales que mostrar.
 
 ### Flujo de una auditoría
 1. Se crea la auditoría (`POST /audits`) eligiendo un framework.
@@ -189,19 +292,18 @@ URLs de Supabase.
 - Ningún endpoint permite auto-otorgarse organización, rol o `platform_admin`.
 
 ### Piloto Invitado (10 días)
-- Un **platform admin** genera un link desde `/settings/team` (restringido
-  a `requirePlatformAdmin`, no a cualquier `ciso`: dar de alta acceso a una
-  organización se trata con el mismo nivel de privilegio que el resto de
-  `/admin/*`), marcando "Acceso Temporal (10 Días)". El **email es
-  opcional** — no hace falta saber de antemano quién va a usar el link, ni
-  depender de que le llegue un correo: el token (`invite_links.id`, UUID no
-  adivinable, un solo uso, vence en 7 días si nadie lo usa) alcanza para
-  unirse desde `/register?invite=<token>`, donde la persona se registra con
-  el email y contraseña que quiera — no tiene que coincidir con ningún
-  email que el admin haya escrito. La organización y el rol de destino se
-  resuelven del lado del servidor contra `invite_links` al aceptar (nunca
-  se confía en lo que diga el cliente); recién ahí se crea el `profiles` y
-  se cuentan los 10 días — un link sin usar no gasta días de prueba.
+> ⚠️ **El mecanismo para crear un Piloto Invitado nuevo quedó huérfano.**
+> Este rol (`auditor_guest`) se otorgaba exclusivamente al aceptar un link
+> de invitación, y ese sistema (`invite_links`, `/settings/team`,
+> `/register?invite=<token>`, `POST /onboarding/accept-invitation`) se
+> eliminó por completo — toda gestión de usuarios ahora es asignación
+> directa desde `/admin` (ver sección de arriba), y esa asignación directa
+> (`POST /admin/users/role`) solo acepta `ciso`/`auditor`/`viewer`, no
+> `auditor_guest`. La mecánica de expiración/degradación/cuotas descrita
+> abajo sigue vigente para cualquier perfil que ya tenga el rol, pero hoy
+> no hay ninguna forma de generar uno nuevo desde la UI. Pendiente:
+> decidir si se agrega `auditor_guest` como opción asignable en
+> `/admin/users/role`, o si se da de baja el resto de la funcionalidad.
 - **Degradación autónoma**: no depende de un job para bajar de nivel. En
   cuanto `expires_at` vence, la siguiente request autenticada de ese
   usuario lo baja a `viewer` en el momento (`authenticateToken`), antes de
@@ -221,9 +323,11 @@ URLs de Supabase.
   (asunto + texto + HTML reales, con los datos de cobertura/días
   restantes), pero **no hay envío real conectado** — sin
   `RESEND_API_KEY`, el contenido queda en el log del servidor en vez de
-  salir por correo. El email de bienvenida (día 1) ya está enganchado a
-  `POST /onboarding/accept-invitation` como demostración del punto de
-  integración.
+  salir por correo. El email de bienvenida (día 1) ya no está enganchado a
+  ningún punto de integración real (vivía en `POST /onboarding/accept-invitation`,
+  eliminado junto con el resto del sistema de invitación) — las funciones
+  siguen ahí, listas para conectarse el día que exista otra forma de dar de
+  alta un Piloto Invitado.
 
 ### Ley N° 21.663 de Ciberseguridad (Chile — ANCI)
 - Framework seleccionable `ley_21663_cl` en `/audits/new` y en la edición de
@@ -256,6 +360,42 @@ URLs de Supabase.
   audit cada 3s mientras está `queued`/`running`, sin necesidad de recargar
   la página a mano, hasta reflejar `completed`/`failed`.
 
+### Verificación de propiedad de dominio
+Ningún dominio se escanea sin antes probar que la organización es su dueña —
+requisito de la Ley N° 21.663 y salvaguarda contra escanear infraestructura
+de terceros sin autorización.
+- **Modelo de datos**: se extendió `assets` (migración
+  `002_asset_verification.sql` + `015_domain_global_uniqueness.sql`) en vez
+  de crear la tabla `organization_domains` que sugería el prompt original —
+  el estado de verificación ya vivía en `assets.verification_status` y
+  duplicarlo en una tabla paralela habría creado dos fuentes de verdad. La
+  migración 015 agrega un índice único global (parcial, case-insensitive)
+  sobre `assets.value` para `type = 'domain'`: un mismo dominio no puede
+  quedar "verificado" por dos organizaciones a la vez, aunque cada una lo
+  haya cargado de forma independiente.
+- **Desafío DNS**: `POST /assets/:id/verify` busca un registro TXT en la
+  **raíz** del dominio (`@`, sin subdominio dedicado) con el valor
+  `aegis-site-verification=<verification_token>` — un solo registro que
+  cualquier persona no técnica puede seguir desde el panel de su proveedor
+  DNS (Cloudflare, NIC Chile, GoDaddy, AWS, etc.).
+- **Security gate en el escáner**: `POST /audits/:id/run-scan` no descarta
+  en silencio los activos no verificados que se pidan por `asset_ids` —
+  aborta toda la solicitud con `403 UNAUTHORIZED_SCAN_TARGET` y registra el
+  intento en `audit_logs` (`UNAUTHORIZED_SCAN_BLOCKED`), con el detalle de
+  qué activos estaban sin verificar.
+- **Delegación a TI**: quien pide la auditoría no siempre tiene acceso al
+  panel DNS de su propio dominio. `POST /assets/:id/delegate-verification`
+  arma y envía (mismo patrón "preparado pero no conectado" que el resto de
+  los emails — ver más abajo) un correo con el registro TXT exacto a crear,
+  reutilizable desde el modal guiado de `/assets`.
+- **UI guiada**: en `/assets`, verificar un activo de tipo dominio abre un
+  modal con explicación en lenguaje llano, el código con botón de copiado
+  de un clic, los 4 pasos a seguir, y la opción "Enviar instrucciones a mi
+  equipo de TI" (mismo diálogo, sin abrir un segundo modal superpuesto).
+  Los activos IP/CIDR siguen su verificación directa anterior (autoatestación
+  de un `ciso`, sin desafío DNS — no hay un mecanismo equivalente simple
+  para el MVP).
+
 ### Compliance, trazabilidad y retención (GDPR / ISO 27001)
 - **Audit logs inmutables**: `audit_logs` registra automáticamente carga de
   evidencias, cambios de estado de hallazgos, generación/descarga de
@@ -283,6 +423,83 @@ URLs de Supabase.
   (`GET /audits/:id/report`) pero siguen apareciendo en el reporte con su
   justificación, para dejar constancia de la decisión.
 
+### FinOps interno — proyección financiera (`/admin/internal-finops`)
+Panel privado para la mesa ejecutiva, separado del panel de costos de
+infraestructura (`/admin/costs`): mientras `/admin/costs` mide **gasto real**
+de la plataforma, `/admin/internal-finops` simula **ingresos, costos
+variables y margen** de negocio a partir de indicadores económicos oficiales
+en tiempo real.
+- **Indicadores en vivo con resiliencia**: `src/services/economicIndicators.ts`
+  consulta `https://mindicador.cl/api` (UF, UTM, Dólar observado) y cachea
+  cada valor obtenido en `system_economic_indicators`. Estrategia de caché:
+  valores de menos de 1h se sirven directo (no golpea la API pública en cada
+  carga del panel); más viejos disparan un fetch en vivo; si Mindicador.cl no
+  responde, se cae automáticamente al último valor guardado (marcado `stale`
+  en la respuesta, con badge distinto en la UI). Un worker de BullMQ
+  (`worker:economic-indicators`) corre además una pasada diaria a las 08:00
+  (America/Santiago) como garantía adicional de frescura — adaptación del
+  "Vercel Cron o pg_cron" que pedía el prompt original a la misma
+  infraestructura de Job Scheduler que ya usa `worker:retention`, ya que este
+  proyecto no corre en Vercel ni usa la extensión `pg_cron`.
+- **Motor de simulación** (`src/services/finopsProjection.ts`, funciones
+  puras): MRR = (clientes Starter × 1,5 UF + clientes Pro × 4,5 UF) × valor
+  UF; COGS = clientes totales × (USD 0,25 × valor dólar); OPEX = USD 40 ×
+  valor dólar (todos editables desde los sliders del panel, salvo el precio
+  por plan). El punto de equilibrio usa el margen de contribución promedio de
+  la mezcla Starter/Pro simulada; si esa mezcla nunca cubre el OPEX, se
+  muestra explícitamente como "no alcanzable" en vez de un número negativo
+  sin sentido. La proyección a 12 meses es un **run-rate constante** (sin
+  curva de crecimiento ni churn, que el prompt original no especificaba) —
+  muestra hacia dónde converge el escenario actual, no un pronóstico.
+- **Acceso**: el prompt original pedía roles `super_admin`/`executive`
+  dedicados; se reutiliza `profiles.is_platform_admin` (`requirePlatformAdmin`)
+  en vez de introducir un segundo sistema de roles paralelo solo para este
+  panel — es el mismo flag de máximo privilegio que ya protege el resto de
+  `/admin/*`.
+- **UI**: ticker con UF/UTM/Dólar del día + badge de conexión, sliders para
+  clientes Starter/Pro, % de penetración del universo de ~10.000 empresas
+  afectas a la Ley 21.663 (SII) y OPEX en USD, tarjetas de MRR/ARR/COGS/OPEX/
+  margen neto/punto de equilibrio, y un gráfico de líneas (Recharts) con
+  Ingresos vs. Costos vs. Utilidad Neta acumulados a 12 meses. Los sliders
+  recalculan contra el backend con un debounce de 300ms.
+
+### KPIs reales del negocio (`/admin/kpis`)
+Contraparte del panel de simulación (`/admin/internal-finops`): en vez de
+proyectar escenarios hipotéticos, consulta las tablas reales de la
+plataforma para reportar rendimiento **ya ejecutado** — sin simulación ni
+datos inventados. Selector de periodo (mes actual / último trimestre
+rolling / año a la fecha) que recalcula todo contra `src/services/realKpiService.ts`.
+- **Sin fabricar lo que no existe**: el prompt original asume tablas de
+  `suscripciones`/`facturación` que no existen en este proyecto — no hay
+  pasarela de pagos conectada (ver "Limitaciones conocidas"). En vez de
+  inventar planes o clientes pagos ficticios, los indicadores financieros
+  que dependen de facturación real (MRR, ARR, ARPU, margen bruto) se
+  calculan honestamente en `0`/`null` con un flag explícito
+  `billingConnected: false` en la respuesta — mismo patrón "preparado pero
+  no conectado" que ya se usa para el envío de emails. **COGS real sí es un
+  dato genuino**: reutiliza `getCostBreakdown()` de `costEngine.ts` (el
+  mismo motor de `/admin/costs`), acotado al periodo seleccionado.
+- **Embudo comercial real**: organizaciones totales, dominios verificados,
+  organizaciones con Piloto Invitado activo o usado (señal real vía
+  `profiles.expires_at`, que se conserva incluso después de que el
+  Piloto expira y el perfil baja a `viewer`), y clientes pagados (`0` hoy,
+  mismo motivo que el punto anterior). Penetración de mercado reutiliza la
+  misma constante de 10.000 empresas (Ley 21.663 / SII) que
+  `/admin/internal-finops`.
+- **Indicadores operativos reales**: % de dominios verificados (sobre
+  `assets` tipo `domain`, ver módulo de verificación de dominio),
+  auditorías completadas y hallazgos críticos detectados en el periodo, y
+  cantidad de correos de delegación a TI enviados
+  (`audit_logs.action = 'DOMAIN_VERIFICATION_EMAIL_SENT'`) — reutiliza
+  directamente instrumentación que ya existía de fases anteriores.
+- **Tabla de organizaciones**: el prompt original pedía una tabla de
+  suscripciones por plan (Starter/Pro/Custom) con estado de pago — al no
+  existir ningún concepto de plan o pago, se reemplaza por una
+  segmentación basada en la única señal de ciclo de vida que sí es real:
+  *Piloto Invitado activo*, *Piloto Invitado vencido* o *Cuenta estándar*.
+- Ver `DASHBOARD_FINOPS_INTERNO.md` (documentación del panel de
+  simulación) para la comparación completa entre ambos paneles.
+
 ---
 
 ## API — endpoints principales
@@ -300,30 +517,35 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | GET | `/frameworks/:framework/requirements` | Checklist de un framework |
 | POST / GET | `/assets` | Crear / listar activos (filtros `?type=&criticality=&tag=`) |
 | GET / DELETE | `/assets/:id` | Detalle / eliminar un activo |
-| POST | `/assets/:id/verify` | Verificar propiedad de un activo |
-| POST | `/audits/:id/run-scan` | Encolar un escaneo asíncrono |
+| POST | `/assets/:id/verify` | Verificar propiedad de un activo (dominio: desafío DNS TXT; IP/CIDR: autoatestación `ciso`) |
+| POST | `/assets/:id/delegate-verification` | Envía por correo las instrucciones de verificación DNS a un contacto de TI (`{ email }`) |
+| POST | `/audits/:id/run-scan` | Encolar un escaneo asíncrono — `403 UNAUTHORIZED_SCAN_TARGET` si algún activo pedido no está verificado |
 | GET | `/audits/:id/findings` | Hallazgos (filtrable por `?severity=`) |
 | GET | `/audits/:id/report` | Genera el reporte y devuelve `{ signedUrl, riskScore, coverage }` |
 | GET | `/audits/:id/anci-status` | Cumplimiento Ley 21.663: `{ sePercentage, oivPercentage, technicalControls }` |
 | GET | `/dashboard/summary` | Métricas agregadas para el dashboard |
-| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones + uso de storage |
-| PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva una organización |
+| GET | `/admin/organizations` | *(platform admin)* Todas las organizaciones (entidad pura: rut, plan, dominio principal, verificación DNS, storage) |
+| PATCH | `/admin/organizations/:id` | *(platform admin)* Edita nombre/rut/plan de una organización |
+| PATCH | `/admin/organizations/:id/suspend` | *(platform admin)* Suspende/reactiva (archiva) una organización |
 | DELETE | `/admin/organizations/:id` | *(platform admin)* Borra una organización |
-| GET | `/admin/organizations/:id/members` | *(platform admin)* Usuarios de una organización |
+| GET | `/admin/organizations/:id/domains` | *(platform admin)* Dominios de una organización con su estado de verificación |
 | GET | `/admin/organizations/:id/activity` | *(platform admin)* Actividad reciente |
+| GET | `/admin/users` | *(platform admin)* Listado global de usuarios (email real, rol, org, estado de cuenta — `?organizationId=` filtra) |
 | POST | `/admin/users/role` | *(platform admin)* Cambia rol y/o `platform_admin` de un usuario |
+| POST | `/admin/users/assign-organization` | *(platform admin)* Reasigna directamente la organización de un usuario existente (`{ userId, organizationId }`), sin invitación ni correo |
+| POST | `/admin/users/deactivate` | *(platform admin)* Desactiva/reactiva una cuenta (`{ userId, deactivated }`) — bloquea el login vía ban nativo de Supabase Auth |
+| GET | `/admin/system-status` | *(platform admin)* Señales reales de salud (ping a Redis, frescura de indicadores económicos) |
 | GET | `/admin/costs/summary` | *(platform admin)* Costo total estimado del mes, desglosado por servicio |
 | GET | `/admin/costs/breakdown` | *(platform admin)* Serie diaria de costo por servicio + costo por organización (`?from=&to=` ISO) |
 | GET | `/admin/costs/audits` | *(platform admin)* Auditorías ordenadas por costo total (`?limit=&from=&to=`) |
 | GET / PATCH | `/admin/costs/pricing` | *(platform admin)* Lee / actualiza las tarifas unitarias por proveedor |
+| GET | `/admin/internal-finops/projection` | *(platform admin)* Proyección financiera interna: indicadores de Mindicador.cl + MRR/ARR/COGS/OPEX/margen/break-even (`?startersCount=&proCount=&opexUsd=&marketPenetrationPct=`) |
+| GET | `/admin/kpis/real-metrics` | *(platform admin)* KPIs reales de negocio (financieros, embudo, operativos) del periodo (`?period=current_month\|last_quarter\|year_to_date`) |
 | GET | `/audits/:id/history` | Timeline de audit logs de una auditoría (evidencias, hallazgos, reportes) |
 | GET | `/admin/audit-logs` | *(platform admin)* Audit logs de toda la plataforma (`?organizationId=&action=&limit=`) |
 | PATCH | `/findings/:id/status` | Cambia estado de un hallazgo a `open`/`false_positive`/`accepted_risk` con justificación obligatoria |
 | GET / PATCH | `/settings/retention` | Lee / actualiza `retention_period_days` de la propia organización *(PATCH solo `ciso`)* |
 | POST | `/admin/retention/run-now` | *(platform admin)* Dispara una pasada de purga inmediata |
-| POST | `/invitations` | *(platform admin)* Genera un link de invitación de un solo uso (`{ email?, temporaryAccess }`, email opcional) |
-| GET | `/invitations/:token` | *(público, sin auth)* Preview de un link de invitación — organización y rol, para mostrar antes de registrarse |
-| POST | `/onboarding/accept-invitation` | Crea el `profiles` de quien acepta un link (`{ token, fullName }`) — organización/rol vienen del token, no del body |
 
 ---
 
@@ -332,15 +554,18 @@ Todos bajo `/api/v1`, requieren `Authorization: Bearer <token>` salvo donde se i
 | Ruta | Qué hace |
 |---|---|
 | `/login`, `/register` | Auth (email/password + Google) |
-| `/onboarding` | Paso final de registro (crear organización), o aceptar una invitación existente si el usuario fue invitado |
+| `/onboarding` | Paso final de registro: crear la organización propia |
 | `/dashboard` | Métricas, distribución de riesgos, alta rápida de auditorías |
 | `/assets` | Gestión de activos: tabla con filtros, alta/edición, verificación, borrado |
 | `/audits/new` | Creación de auditoría con selección múltiple de activos |
 | `/audits/[id]` | Matriz de cobertura + carga de evidencias (drag & drop) + disparo manual de escaneo (estado en vivo cada 3s) |
 | `/audits/[id]/report` | Hallazgos filtrables por severidad, acciones de falso positivo/riesgo aceptado, tarjeta de cumplimiento ANCI (Ley 21.663), descarga de PDF |
-| `/settings/team` | *(platform admin)* Genera links de invitación (copiar/compartir), permanentes o Piloto Invitado (10 días) |
-| `/admin` | *(solo platform admin)* Métricas de plataforma, gestión de organizaciones, roles y actividad |
-| `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas |
+| `/admin` | *(solo platform admin)* Resumen ejecutivo: 4 KPIs reales, actividad reciente y alertas operativas (dentro del sidebar del Command Center) |
+| `/admin/organizations` | *(solo platform admin)* Organizaciones como entidad pura: rut, plan, dominio, verificación DNS, editar/archivar/eliminar, detalle de dominios y actividad |
+| `/admin/users` | *(solo platform admin)* Gestión global de usuarios: rol, `platform_admin`, reasignar organización, desactivar/reactivar cuenta |
+| `/admin/costs` | *(solo platform admin)* Panel FinOps: costo estimado por servicio del stack, tendencia diaria, top auditorías más costosas y edición de tarifas (bajo tabs junto a `/admin/internal-finops`) |
+| `/admin/internal-finops` | *(solo platform admin)* FinOps interno: ticker UF/UTM/Dólar en vivo, sliders de simulación de escenario, MRR/ARR/COGS/OPEX/margen/break-even y proyección a 12 meses |
+| `/admin/kpis` | *(solo platform admin)* KPIs reales del negocio: selector de periodo, embudo comercial, indicadores operativos, actividad diaria y tabla de organizaciones por segmento |
 | `/audits/[id]/history` | Línea de tiempo de audit logs de esa auditoría (evidencias, hallazgos, reportes) |
 | `/admin/audit-logs` | *(solo platform admin)* Audit logs de toda la plataforma, filtrables por organización/acción |
 | `/settings/retention` | *(`ciso` o platform admin)* Configura días de retención de evidencias y ve estadísticas de purga |
@@ -364,9 +589,10 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   (ya se guarda por evidencia); no consulta la Management API de Supabase.
 - La suite de tests (`npm test`) necesita un proyecto Supabase **de test**
   separado — no se puede correr sin esa infraestructura.
-- No hay flujo de "cambiar contraseña" todavía. Invitar sí está resuelto
-  (`/settings/team`), permanente o como Piloto Invitado de 10 días — pero
-  solo un platform admin puede invitar, no cualquier `ciso`.
+- No hay flujo de "cambiar contraseña" todavía. Tampoco hay ningún flujo de
+  invitación — cada quien crea su propia organización al registrarse; un
+  platform admin reorganiza gente después vía `/admin` (ver "Gestión
+  directa de usuarios" arriba).
 - El panel FinOps (`/admin/costs`) calcula costos **estimados**, no reales:
   no hay integración con las APIs de facturación de Supabase/Upstash/el
   hosting (requerirían tokens de Management API distintos al service_role).
@@ -395,3 +621,47 @@ Selector de idioma (ES neutro / EN) en todas las pantallas, persistido en
   encolarse por encima de 3 en una ventana muy angosta. No aplica a la
   cuota de storage, que sí se valida contra el tamaño acumulado real antes
   de aceptar cada subida.
+- El correo de delegación a TI (`POST /assets/:id/delegate-verification`)
+  sigue el mismo patrón "preparado pero no conectado" que el resto de los
+  emails del sistema: sin `RESEND_API_KEY`, el asunto/contenido queda en el
+  log del servidor en vez de salir por correo real.
+- La verificación de activos IP/CIDR es autoatestación de un `ciso` (no hay
+  desafío DNS equivalente sencillo para un rango de IPs); no prueba
+  criptográficamente la titularidad — a mejorar con RDAP/WHOIS cruzado
+  contra el dominio corporativo ya verificado.
+- La proyección a 12 meses de `/admin/internal-finops` es un run-rate
+  constante del escenario simulado (sin curva de crecimiento ni churn) —
+  útil para visualizar el punto de equilibrio dado el escenario actual, no
+  como pronóstico real de crecimiento de clientes.
+- El worker `worker:economic-indicators` es, igual que `worker:retention` y
+  `worker:scan`, un proceso aparte del API; en producción hace falta
+  levantarlo por separado para que la actualización diaria de UF/UTM/Dólar
+  a las 08:00 realmente corra sola (el endpoint del panel igual se
+  autoactualiza al vuelo si nadie lo hace, así que no es estrictamente
+  necesario para que el panel funcione, solo para la garantía de frescura
+  diaria).
+- `/admin/kpis` reporta MRR/ARR/ARPU/margen bruto real en `0`/`null` porque
+  no hay pasarela de pagos ni tabla de suscripciones conectada todavía (ver
+  `financial.billingConnected: false` en la respuesta) — no es un bug, es
+  el estado real hasta que exista facturación. La "tasa de conversión de
+  prueba a pago" y el "churn rate" tampoco son calculables por el mismo
+  motivo y se devuelven como `null`.
+- "Último trimestre" en `/admin/kpis` se interpreta como los últimos 3
+  meses corridos desde hoy (rolling), no el trimestre calendario anterior
+  — evita ambigüedad de límites de trimestre.
+- Reasignar la organización de un usuario (`POST /admin/users/assign-organization`)
+  solo cambia su acceso hacia adelante — las auditorías/activos/evidencias
+  que ya creó quedan tal como están, asociados a la organización original
+  (vía `created_by`), no se migran ni se re-etiquetan.
+- `GET /admin/users` trae hasta 1.000 usuarios en una sola página (vía
+  `supabaseAdmin.auth.admin.listUsers`) — de sobra para la escala actual,
+  pero habría que paginar de verdad si la plataforma creciera mucho más.
+- El buscador universal de `/admin` (`Cmd/Ctrl+K`) filtra en el cliente
+  contra el mismo límite de 1.000 usuarios + todas las organizaciones ya
+  cargadas — no es un índice de búsqueda real ni un command palette con
+  atajos de navegación, es un filtro por substring sobre datos que el
+  panel ya tiene en memoria.
+- El `plan` de una organización (`starter`/`pro`/`custom`) es una etiqueta
+  administrativa editable desde `/admin/organizations`, no una suscripción
+  real — no hay pasarela de pagos conectada, así que cambiarlo no activa
+  ni desactiva ninguna funcionalidad todavía.

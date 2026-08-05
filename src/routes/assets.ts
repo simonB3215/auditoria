@@ -1,11 +1,16 @@
 import { Router } from "express";
 import { resolveTxt } from "node:dns/promises";
+import { z } from "zod";
 import { authenticateToken, requireRole } from "../middlewares/auth.js";
+import { sensitiveActionRateLimiter } from "../middlewares/security.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser } from "../config/supabase.js";
 import { assetInputSchema } from "../validators/assetValidators.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
+import { env } from "../config/env.js";
+import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
+import { sendDomainDelegationEmail } from "../services/emailTemplates.js";
 
 export const assetsRouter = Router();
 
@@ -28,12 +33,23 @@ assetsRouter.post(
         organization_id: profile.organizationId,
         created_by: profile.id,
       })
-      .select("id, type, value, criticality, tags, verification_status, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verification_token, created_at")
       .single();
 
     if (error) {
-      // unique(organization_id, type, value)
       if (error.code === "23505") {
+        // Dos constraints distintas devuelven el mismo código: unique(org,
+        // type, value) — este activo puntual ya está en tu organización —
+        // o, solo para dominios, el índice único global (ver migración
+        // 015): ese dominio ya lo reclamó OTRA organización, así que nunca
+        // puede pasar a ser tuyo por más que lo cargues de nuevo.
+        if (body.type === "domain" && error.message.includes("idx_assets_domain_global_unique")) {
+          throw new AppError(
+            409,
+            "DOMAIN_ALREADY_CLAIMED",
+            "Este dominio ya está registrado por otra organización en la plataforma. Si es tuyo, contactá a soporte."
+          );
+        }
         throw new AppError(409, "ASSET_ALREADY_EXISTS", "Este activo ya está registrado en tu organización");
       }
       throw new AppError(400, "ASSET_CREATE_FAILED", error.message);
@@ -52,7 +68,7 @@ assetsRouter.get(
 
     let query = supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verification_token, verified_at, created_at")
       .order("created_at", { ascending: false });
 
     const { type, criticality, tag } = req.query;
@@ -80,7 +96,7 @@ assetsRouter.get(
 
     const { data, error } = await supabase
       .from("assets")
-      .select("id, type, value, criticality, tags, verification_status, verified_at, created_at")
+      .select("id, type, value, criticality, tags, verification_status, verification_token, verified_at, created_at")
       .eq("id", req.params.id)
       .maybeSingle();
 
@@ -120,10 +136,14 @@ assetsRouter.delete(
 
 /**
  * Verificación de propiedad. Requisito previo para poder incluir el activo
- * en un escaneo activo (ver POST /audits/:id/run-scan).
+ * en un escaneo activo (ver POST /audits/:id/run-scan y su security gate
+ * explícito para dominios no verificados).
  *
- * - domain: se exige un registro DNS TXT en `_aegis-verification.<dominio>`
- *   con el valor `aegis-verify=<verification_token>`.
+ * - domain: se exige un registro DNS TXT en la RAÍZ del propio dominio
+ *   (Nombre: `@`) con el valor `aegis-site-verification=<verification_token>`
+ *   — formato de un solo registro, sin subdominio dedicado, para que
+ *   cualquier persona no técnica pueda seguir los pasos desde el panel de
+ *   su proveedor DNS (Cloudflare, NIC Chile, GoDaddy, etc.).
  * - ip / cidr: no existe un mecanismo DNS equivalente sencillo para el MVP;
  *   se acepta la autoatestación de un rol `ciso` (dueño de la cuenta de la
  *   organización). Limitación conocida: no prueba criptográficamente la
@@ -157,15 +177,15 @@ assetsRouter.post(
     }
 
     if (asset.type === "domain") {
-      const expected = `aegis-verify=${asset.verification_token}`;
+      const expected = `aegis-site-verification=${asset.verification_token}`;
       let records: string[][] = [];
       try {
-        records = await resolveTxt(`_aegis-verification.${asset.value}`);
+        records = await resolveTxt(asset.value);
       } catch {
         throw new AppError(
           422,
           "DNS_RECORD_NOT_FOUND",
-          `No se encontró el registro TXT en _aegis-verification.${asset.value}. Esperado: "${expected}"`
+          `No se encontró ningún registro TXT en ${asset.value}. Esperado: "${expected}"`
         );
       }
       const found = records.some((chunks) => chunks.join("").trim() === expected);
@@ -173,7 +193,7 @@ assetsRouter.post(
         throw new AppError(
           422,
           "DNS_RECORD_MISMATCH",
-          `El registro TXT encontrado no coincide con el token esperado ("${expected}")`
+          `El registro TXT encontrado no coincide con el código esperado ("${expected}")`
         );
       }
     } else if (profile.role !== "ciso") {
@@ -196,5 +216,78 @@ assetsRouter.post(
     }
 
     res.status(200).json({ data: updated });
+  })
+);
+
+const delegateVerificationSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+/**
+ * Flujo "Enviar a mi equipo de TI" (a.md, sección 3.C): quien pide la
+ * auditoría a menudo no es quien tiene acceso al panel DNS. En vez de
+ * obligarlo a copiar/pegar el código a mano por fuera de la plataforma, se
+ * le arma y envía el correo con el registro TXT exacto. Reusa el patrón
+ * "preparado pero no conectado" de emailTemplates.ts — sin RESEND_API_KEY
+ * el correo se registra en consola en vez de entregarse de verdad.
+ */
+assetsRouter.post(
+  "/assets/:id/delegate-verification",
+  authenticateToken,
+  requireRole(["ciso", "auditor", "auditor_guest"]),
+  validateUuidParams("id"),
+  sensitiveActionRateLimiter,
+  asyncHandler(async (req, res) => {
+    const profile = req.profile!;
+    const supabase = supabaseForUser(profile.accessToken);
+    const body = delegateVerificationSchema.parse(req.body);
+
+    const { data: asset, error: fetchError } = await supabase
+      .from("assets")
+      .select("id, type, value, verification_token, verification_status")
+      .eq("id", req.params.id)
+      .maybeSingle();
+
+    if (fetchError) {
+      throw new AppError(400, "ASSET_FETCH_FAILED", fetchError.message);
+    }
+    if (!asset) {
+      throw new AppError(404, "ASSET_NOT_FOUND", "Activo no encontrado");
+    }
+    if (asset.type !== "domain") {
+      throw new AppError(
+        422,
+        "DELEGATION_REQUIRES_DOMAIN",
+        "La delegación a TI por correo solo aplica a activos de tipo dominio"
+      );
+    }
+    if (asset.verification_status === "verified") {
+      throw new AppError(409, "ASSET_ALREADY_VERIFIED", "Este dominio ya está verificado");
+    }
+
+    const [{ data: requesterProfile }, { data: organization }] = await Promise.all([
+      supabase.from("profiles").select("full_name").eq("id", profile.id).maybeSingle(),
+      supabase.from("organizations").select("name").eq("id", profile.organizationId).maybeSingle(),
+    ]);
+
+    const template = await sendDomainDelegationEmail(body.email, {
+      requesterName: requesterProfile?.full_name ?? "Un miembro de tu organización",
+      organizationName: organization?.name ?? "su organización",
+      domain: asset.value,
+      verificationToken: asset.verification_token,
+      verifyUrl: `${env.CORS_ORIGIN}/assets`,
+    });
+
+    await logAuditEvent({
+      organizationId: profile.organizationId,
+      actorId: profile.id,
+      action: AUDIT_ACTIONS.DOMAIN_VERIFICATION_EMAIL_SENT,
+      resourceType: "asset",
+      resourceId: asset.id,
+      payloadAfter: { domain: asset.value, sentTo: body.email, subject: template.subject },
+      ...requestContext(req),
+    });
+
+    res.status(202).json({ data: { sentTo: body.email, subject: template.subject } });
   })
 );

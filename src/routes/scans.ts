@@ -7,6 +7,7 @@ import { AppError } from "../middlewares/errorHandler.js";
 import { supabaseForUser, supabaseAdmin } from "../config/supabase.js";
 import { scanQueue, type ScanTargetAsset } from "../jobs/scanQueue.js";
 import { validateUuidParams } from "../middlewares/validateParams.js";
+import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 
 export const scansRouter = Router();
 
@@ -69,20 +70,54 @@ scansRouter.post(
       }
     }
 
-    let assetsQuery = supabase
-      .from("assets")
-      .select("id, type, value, verification_status")
-      .eq("verification_status", "verified");
+    let assets: Array<{ id: string; type: string; value: string; verification_status: string }> = [];
 
     if (body.asset_ids && body.asset_ids.length > 0) {
-      assetsQuery = assetsQuery.in("id", body.asset_ids);
+      // Security gate explícito (a.md, sección "Security Gate"): si el
+      // cliente pide activos puntuales por id, hay que distinguir "no
+      // verificado" de "no existe / no es tuyo" — este segundo caso ya lo
+      // cubre RLS (el activo ajeno ni siquiera aparece). Si aparece pero no
+      // está verificado, no se lo descarta en silencio: se aborta TODA la
+      // solicitud con 403 y se audita el intento, tal como pide a.md.
+      const { data: requested, error: requestedError } = await supabase
+        .from("assets")
+        .select("id, type, value, verification_status")
+        .in("id", body.asset_ids);
+      if (requestedError) {
+        throw new AppError(400, "ASSETS_FETCH_FAILED", requestedError.message);
+      }
+      const unverified = (requested ?? []).filter((a) => a.verification_status !== "verified");
+      if (unverified.length > 0) {
+        await logAuditEvent({
+          organizationId: audit.organization_id,
+          actorId: profile.id,
+          action: AUDIT_ACTIONS.UNAUTHORIZED_SCAN_BLOCKED,
+          resourceType: "scan",
+          resourceId: auditId,
+          payloadAfter: {
+            unverifiedAssets: unverified.map((a) => ({ id: a.id, type: a.type, value: a.value })),
+          },
+          ...requestContext(req),
+        });
+        throw new AppError(
+          403,
+          "UNAUTHORIZED_SCAN_TARGET",
+          `No se puede ejecutar el escaneo: ${unverified.length} activo(s) seleccionado(s) no tiene(n) su propiedad verificada. Verificá el dominio con POST /assets/:id/verify antes de reintentar.`
+        );
+      }
+      assets = requested ?? [];
+    } else {
+      const { data, error: assetsError } = await supabase
+        .from("assets")
+        .select("id, type, value, verification_status")
+        .eq("verification_status", "verified");
+      if (assetsError) {
+        throw new AppError(400, "ASSETS_FETCH_FAILED", assetsError.message);
+      }
+      assets = data ?? [];
     }
 
-    const { data: assets, error: assetsError } = await assetsQuery;
-    if (assetsError) {
-      throw new AppError(400, "ASSETS_FETCH_FAILED", assetsError.message);
-    }
-    if (!assets || assets.length === 0) {
+    if (assets.length === 0) {
       throw new AppError(
         422,
         "NO_VERIFIED_ASSETS",

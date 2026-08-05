@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, Copy, Mail, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Dialog,
@@ -33,8 +34,8 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [typeFilter, setTypeFilter] = useState<string>("");
-  const [criticalityFilter, setCriticalityFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [criticalityFilter, setCriticalityFilter] = useState<string>("all");
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newType, setNewType] = useState<AssetType>("ip");
@@ -45,6 +46,17 @@ export default function AssetsPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Verificación guiada de dominio (a.md, sección UX): activo actual del
+  // modal + copiado del código + sub-modal de delegación a TI.
+  const [verifyDomainAsset, setVerifyDomainAsset] = useState<Asset | null>(null);
+  const [verifyDomainError, setVerifyDomainError] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateEmail, setDelegateEmail] = useState("");
+  const [delegateSending, setDelegateSending] = useState(false);
+  const [delegateError, setDelegateError] = useState<string | null>(null);
+  const [delegateSuccess, setDelegateSuccess] = useState(false);
 
   const TYPE_LABEL: Record<AssetType, string> = {
     ip: t.typeIp,
@@ -64,8 +76,8 @@ export default function AssetsPage() {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
-    if (typeFilter) params.set("type", typeFilter);
-    if (criticalityFilter) params.set("criticality", criticalityFilter);
+    if (typeFilter && typeFilter !== "all") params.set("type", typeFilter);
+    if (criticalityFilter && criticalityFilter !== "all") params.set("criticality", criticalityFilter);
 
     api
       .get<{ data: Asset[] }>(`/api/v1/assets${params.toString() ? `?${params}` : ""}`)
@@ -129,6 +141,54 @@ export default function AssetsPage() {
     }
   }
 
+  function openVerifyDomainDialog(asset: Asset) {
+    setVerifyDomainAsset(asset);
+    setVerifyDomainError(null);
+    setTokenCopied(false);
+    setDelegateOpen(false);
+    setDelegateEmail("");
+    setDelegateError(null);
+    setDelegateSuccess(false);
+  }
+
+  function handleCopyToken() {
+    if (!verifyDomainAsset?.verification_token) return;
+    navigator.clipboard.writeText(`aegis-site-verification=${verifyDomainAsset.verification_token}`).then(() => {
+      setTokenCopied(true);
+      setTimeout(() => setTokenCopied(false), 2000);
+    });
+  }
+
+  async function handleVerifyDomainNow() {
+    if (!verifyDomainAsset) return;
+    setBusyId(verifyDomainAsset.id);
+    setVerifyDomainError(null);
+    try {
+      const res = await api.post<{ data: Asset }>(`/api/v1/assets/${verifyDomainAsset.id}/verify`);
+      setAssets((prev) => prev.map((a) => (a.id === verifyDomainAsset.id ? { ...a, ...res.data.data } : a)));
+      setVerifyDomainAsset(null);
+    } catch (err) {
+      setVerifyDomainError(getApiErrorMessage(err, t.verifyFailed));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDelegateToIt(e: FormEvent) {
+    e.preventDefault();
+    if (!verifyDomainAsset) return;
+    setDelegateSending(true);
+    setDelegateError(null);
+    try {
+      await api.post(`/api/v1/assets/${verifyDomainAsset.id}/delegate-verification`, { email: delegateEmail });
+      setDelegateSuccess(true);
+    } catch (err) {
+      setDelegateError(getApiErrorMessage(err, t.delegateFailed));
+    } finally {
+      setDelegateSending(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -148,18 +208,18 @@ export default function AssetsPage() {
             <form onSubmit={handleCreate} className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asset-type">{t.type}</Label>
-                <select
-                  id="asset-type"
-                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value as AssetType)}
-                >
-                  {ASSET_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {TYPE_LABEL[type]}
-                    </option>
-                  ))}
-                </select>
+                <Select value={newType} onValueChange={(v) => setNewType(v as AssetType)}>
+                  <SelectTrigger id="asset-type" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ASSET_TYPES.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {TYPE_LABEL[type]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asset-value">{t.value}</Label>
@@ -173,18 +233,18 @@ export default function AssetsPage() {
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asset-criticality">{t.criticality}</Label>
-                <select
-                  id="asset-criticality"
-                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-                  value={newCriticality}
-                  onChange={(e) => setNewCriticality(e.target.value as AssetCriticality)}
-                >
-                  {CRITICALITIES.map((c) => (
-                    <option key={c} value={c}>
-                      {CRITICALITY_LABEL[c]}
-                    </option>
-                  ))}
-                </select>
+                <Select value={newCriticality} onValueChange={(v) => setNewCriticality(v as AssetCriticality)}>
+                  <SelectTrigger id="asset-criticality" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CRITICALITIES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {CRITICALITY_LABEL[c]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-2">
                 <Label htmlFor="asset-tags">{t.tags}</Label>
@@ -216,32 +276,32 @@ export default function AssetsPage() {
         <CardHeader className="flex flex-row flex-wrap items-center gap-3">
           <CardTitle className="text-base">{t.title}</CardTitle>
           <div className="ml-auto flex flex-wrap gap-2">
-            <select
-              className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-              aria-label={t.filterType}
-            >
-              <option value="">{t.filterAll}</option>
-              {ASSET_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {TYPE_LABEL[type]}
-                </option>
-              ))}
-            </select>
-            <select
-              className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
-              value={criticalityFilter}
-              onChange={(e) => setCriticalityFilter(e.target.value)}
-              aria-label={t.filterCriticality}
-            >
-              <option value="">{t.filterAll}</option>
-              {CRITICALITIES.map((c) => (
-                <option key={c} value={c}>
-                  {CRITICALITY_LABEL[c]}
-                </option>
-              ))}
-            </select>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger size="sm" aria-label={t.filterType}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.filterAll}</SelectItem>
+                {ASSET_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {TYPE_LABEL[type]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={criticalityFilter} onValueChange={setCriticalityFilter}>
+              <SelectTrigger size="sm" aria-label={t.filterCriticality}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.filterAll}</SelectItem>
+                {CRITICALITIES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {CRITICALITY_LABEL[c]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -291,7 +351,18 @@ export default function AssetsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        {asset.verification_status !== "verified" && (
+                        {asset.verification_status !== "verified" && asset.type === "domain" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busyId === asset.id}
+                            onClick={() => openVerifyDomainDialog(asset)}
+                          >
+                            <ShieldCheck className="size-3.5" aria-hidden />
+                            {t.verify}
+                          </Button>
+                        )}
+                        {asset.verification_status !== "verified" && asset.type !== "domain" && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -319,6 +390,123 @@ export default function AssetsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={verifyDomainAsset !== null} onOpenChange={(open) => !open && setVerifyDomainAsset(null)}>
+        <DialogContent>
+          {verifyDomainAsset && !delegateOpen && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t.verifyDomainTitle}</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-4">
+                <p className="rounded-md border bg-muted/50 p-3 text-sm">{t.verifyDomainIntro}</p>
+
+                <div className="flex flex-col gap-2">
+                  <Label>{t.verifyDomainTokenLabel}</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      readOnly
+                      value={`aegis-site-verification=${verifyDomainAsset.verification_token ?? ""}`}
+                      className="font-mono text-xs"
+                      onFocus={(e) => e.target.select()}
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={handleCopyToken}>
+                      {tokenCopied ? <Check className="size-3.5" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
+                      {tokenCopied ? t.copied : t.copyCode}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-medium">{t.verifyDomainStepsTitle}</p>
+                  <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+                    <li>{t.verifyDomainStep1}</li>
+                    <li>{t.verifyDomainStep2}</li>
+                    <li>{t.verifyDomainStep3}</li>
+                    <li>{t.verifyDomainStep4}</li>
+                  </ol>
+                </div>
+
+                {verifyDomainError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{verifyDomainError}</AlertDescription>
+                  </Alert>
+                )}
+
+                <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setDelegateOpen(true);
+                      setDelegateEmail("");
+                      setDelegateError(null);
+                      setDelegateSuccess(false);
+                    }}
+                    className="justify-start"
+                  >
+                    <Mail className="size-3.5" aria-hidden />
+                    {t.delegateToIt}
+                  </Button>
+                  <Button type="button" disabled={busyId === verifyDomainAsset.id} onClick={handleVerifyDomainNow}>
+                    <ShieldCheck className="size-3.5" aria-hidden />
+                    {busyId === verifyDomainAsset.id ? t.verifying : t.verifyNow}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </>
+          )}
+
+          {verifyDomainAsset && delegateOpen && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{t.delegateModalTitle}</DialogTitle>
+              </DialogHeader>
+
+              {delegateSuccess ? (
+                <div className="flex flex-col gap-4">
+                  <Alert>
+                    <AlertDescription>{t.delegateSuccess}</AlertDescription>
+                  </Alert>
+                  <Button type="button" variant="outline" onClick={() => setDelegateOpen(false)} className="self-start">
+                    {t.close}
+                  </Button>
+                </div>
+              ) : (
+                <form onSubmit={handleDelegateToIt} className="flex flex-col gap-4">
+                  <p className="text-sm text-muted-foreground">{t.delegateModalDescription}</p>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="delegate-email">{t.delegateEmailLabel}</Label>
+                    <Input
+                      id="delegate-email"
+                      type="email"
+                      required
+                      value={delegateEmail}
+                      onChange={(e) => setDelegateEmail(e.target.value)}
+                      placeholder={t.delegateEmailPlaceholder}
+                    />
+                  </div>
+
+                  {delegateError && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{delegateError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+                    <Button type="button" variant="ghost" onClick={() => setDelegateOpen(false)} className="justify-start">
+                      {t.cancel}
+                    </Button>
+                    <Button type="submit" disabled={delegateSending}>
+                      {delegateSending ? t.delegateSending : t.delegateSend}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

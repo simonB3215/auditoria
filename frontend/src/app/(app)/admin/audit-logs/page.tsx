@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AuditLogTable } from "@/components/audit-log-table";
 
 const ACTIONS: AuditLogAction[] = [
@@ -102,37 +103,37 @@ export default function AdminAuditLogsPage() {
               <Label htmlFor="org" className="text-xs">
                 {t.filterOrg}
               </Label>
-              <select
-                id="org"
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
-                value={orgFilter}
-                onChange={(e) => setOrgFilter(e.target.value)}
-              >
-                <option value="all">{t.filterAllOrgs}</option>
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              <Select value={orgFilter} onValueChange={setOrgFilter}>
+                <SelectTrigger id="org" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.filterAllOrgs}</SelectItem>
+                  {orgs.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="action" className="text-xs">
                 {t.filterAction}
               </Label>
-              <select
-                id="action"
-                className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
-                value={actionFilter}
-                onChange={(e) => setActionFilter(e.target.value as AuditLogAction | "all")}
-              >
-                <option value="all">{t.filterAllActions}</option>
-                {ACTIONS.map((action) => (
-                  <option key={action} value={action}>
-                    {(dict.history as Record<string, string>)[`action_${action}`]}
-                  </option>
-                ))}
-              </select>
+              <Select value={actionFilter} onValueChange={(v) => setActionFilter(v as AuditLogAction | "all")}>
+                <SelectTrigger id="action" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.filterAllActions}</SelectItem>
+                  {ACTIONS.map((action) => (
+                    <SelectItem key={action} value={action}>
+                      {(dict.history as Record<string, string>)[`action_${action}`]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button size="sm" variant="outline" className="h-8" onClick={() => loadLogs(orgFilter, actionFilter)}>
               {t.applyFilters}
