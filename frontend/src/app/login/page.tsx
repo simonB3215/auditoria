@@ -25,8 +25,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("error") === "oauth_failed") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "oauth_failed") {
       setError(t.oauthFailed);
+    } else if (params.get("reason") === "session_expired") {
+      setError(t.sessionExpired);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

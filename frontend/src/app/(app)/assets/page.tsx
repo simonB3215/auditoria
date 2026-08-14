@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Check, Copy, HelpCircle, Loader2, Mail, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, Copy, Globe, HelpCircle, Loader2, Mail, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -28,6 +28,15 @@ import {
 } from "@/components/ui/dialog";
 
 const ASSET_TYPES: AssetType[] = ["ip", "cidr", "domain", "repository", "cloud_server"];
+// Selector del modal de registro (a.md, "SIMPLIFICACIÓN DE TIPOS DE
+// RECURSOS"): limitado a los dos tipos de perímetro externo que Nmap
+// puede escanear sin pedir nada del usuario — cidr/repository/cloud_server
+// generaban desconfianza (sugieren credenciales de nube o acceso a código
+// fuente) y quedan fuera de la creación, aunque el tipo y el filtro de la
+// tabla (`ASSET_TYPES` arriba) siguen soportando los 5 valores por si
+// existiera algún activo de esos tipos cargado antes o vía API — no se
+// tocó el schema del backend, solo este selector.
+const REGISTRABLE_ASSET_TYPES: AssetType[] = ["ip", "domain"];
 const CRITICALITIES: AssetCriticality[] = ["critica", "alta", "media", "baja"];
 const TAG_CHIP_KEYS = ["production", "website", "internal", "testing", "backend", "frontend", "api", "database"] as const;
 
@@ -65,6 +74,32 @@ function validateAssetValue(type: AssetType, value: string): "ip" | "cidr" | "do
     case "cloud_server":
       return null;
   }
+}
+
+/**
+ * Detección de rango privado (a.md, "Validación de IP Pública vs.
+ * Privada"): es una advertencia, no un error — una IP privada es
+ * sintácticamente válida, solo no es alcanzable desde Internet para el
+ * escaneo externo. Se evalúa aparte de `validateAssetValue` porque
+ * conviven: el campo puede estar "válido" (formato correcto) y a la vez
+ * merecer esta advertencia.
+ */
+function isPrivateIpAddress(ip: string): boolean {
+  const parts = ip.trim().split(".").map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  return false;
+}
+
+function isPrivateIpValue(type: AssetType, value: string): boolean {
+  const v = value.trim();
+  if (type === "ip") return isPrivateIpAddress(v);
+  if (type === "cidr") return isPrivateIpAddress(v.split("/")[0] ?? "");
+  return false;
 }
 
 /**
@@ -123,25 +158,45 @@ export default function AssetsPage() {
   const [newValue, setNewValue] = useState("");
   const [valueTouched, setValueTouched] = useState(false);
   const [newCriticality, setNewCriticality] = useState<AssetCriticality>("media");
-  const [selectedTagChips, setSelectedTagChips] = useState<string[]>([]);
-  const [customTags, setCustomTags] = useState("");
+  // TagInput consolidado (a.md, "Consolidación de Etiquetas"): un único
+  // array de etiquetas finales en vez de separar "chips predefinidos
+  // seleccionados" y "texto libre separado por coma" en dos mecanismos
+  // distintos — las píldoras predefinidas son atajos que agregan/quitan
+  // de esta misma lista, no un estado paralelo.
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagDraft, setTagDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const valueErrorKey = validateAssetValue(newType, newValue);
+  const showPrivateIpWarning = !valueErrorKey && isPrivateIpValue(newType, newValue);
 
   function resetAssetForm() {
     setNewType("ip");
     setNewValue("");
     setValueTouched(false);
     setNewCriticality("media");
-    setSelectedTagChips([]);
-    setCustomTags("");
+    setTags([]);
+    setTagDraft("");
     setFormError(null);
   }
 
-  function toggleTagChip(key: string) {
-    setSelectedTagChips((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  function addTag(label: string) {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    setTags((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+  }
+
+  function removeTag(label: string) {
+    setTags((prev) => prev.filter((tag) => tag !== label));
+  }
+
+  function handleTagDraftKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag(tagDraft);
+      setTagDraft("");
+    }
   }
 
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -235,13 +290,6 @@ export default function AssetsPage() {
     setFormError(null);
     setSaving(true);
     try {
-      const chipTags = selectedTagChips.map((key) => TAG_CHIP_LABEL[key as (typeof TAG_CHIP_KEYS)[number]]);
-      const customTagList = customTags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      const tags = [...new Set([...chipTags, ...customTagList])];
-
       await api.post("/api/v1/assets", { type: newType, value: newValue, criticality: newCriticality, tags });
       setDialogOpen(false);
       resetAssetForm();
@@ -369,7 +417,7 @@ export default function AssetsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ASSET_TYPES.map((type) => (
+                    {REGISTRABLE_ASSET_TYPES.map((type) => (
                       <SelectItem key={type} value={type}>
                         {TYPE_LABEL[type]}
                       </SelectItem>
@@ -379,6 +427,13 @@ export default function AssetsPage() {
                 <p id="asset-type-desc" className="text-xs text-muted-foreground">
                   {TYPE_DESCRIPTION[newType]}
                 </p>
+                <p className="text-xs text-muted-foreground">{t.typeSchemaRedirectNote}</p>
+                {(newType === "ip" || newType === "cidr" || newType === "domain") && (
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                    <Globe className="size-3.5 shrink-0" aria-hidden />
+                    {t.scanGuaranteeBadge}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-col gap-2">
@@ -406,6 +461,11 @@ export default function AssetsPage() {
                     {t.valueHelp}
                   </p>
                 )}
+                {showPrivateIpWarning && (
+                  <p role="alert" className="rounded-md border border-[var(--severity-medium)]/40 bg-[var(--severity-medium)]/10 px-2.5 py-1.5 text-xs font-medium text-[var(--severity-medium)]">
+                    {t.privateIpWarning}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-col gap-2">
@@ -430,38 +490,47 @@ export default function AssetsPage() {
 
               <div className="flex flex-col gap-2">
                 <FieldLabel label={t.tags} tooltip={t.tagsHelp} />
-                <div className="flex flex-wrap gap-1.5" role="group" aria-label={t.tags}>
-                  {TAG_CHIP_KEYS.map((key) => {
-                    const pressed = selectedTagChips.includes(key);
-                    return (
+                <div
+                  className="flex flex-wrap items-center gap-1.5 rounded-md border border-input px-2 py-1.5 focus-within:ring-3 focus-within:ring-ring/50"
+                  role="group"
+                  aria-label={t.tags}
+                >
+                  {tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center gap-1 rounded-full border border-primary bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground"
+                    >
+                      {tag}
                       <button
-                        key={key}
                         type="button"
-                        aria-pressed={pressed}
-                        onClick={() => toggleTagChip(key)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
-                          pressed
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-input bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
+                        onClick={() => removeTag(tag)}
+                        aria-label={t.tagsRemoveAria.replace("{tag}", tag)}
+                        className="rounded-full hover:opacity-75 focus-visible:outline-none"
                       >
-                        {pressed ? "✓ " : "+ "}
-                        {TAG_CHIP_LABEL[key]}
+                        <X className="size-3" aria-hidden />
                       </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-col gap-1.5 pt-1">
-                  <Label htmlFor="asset-custom-tags" className="text-xs text-muted-foreground">
-                    {t.tagsCustomLabel}
-                  </Label>
-                  <Input
-                    id="asset-custom-tags"
-                    value={customTags}
-                    onChange={(e) => setCustomTags(e.target.value)}
-                    placeholder={t.tagsCustomPlaceholder}
+                    </span>
+                  ))}
+                  <input
+                    id="asset-tag-draft"
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={handleTagDraftKeyDown}
+                    placeholder={tags.length === 0 ? t.tagsAddPlaceholder : ""}
+                    className="min-w-[12ch] flex-1 bg-transparent p-1 text-sm outline-none placeholder:text-muted-foreground"
                   />
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {TAG_CHIP_KEYS.filter((key) => !tags.includes(TAG_CHIP_LABEL[key])).map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => addTag(TAG_CHIP_LABEL[key])}
+                      className="rounded-full border border-dashed border-input px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      + {TAG_CHIP_LABEL[key]}
+                    </button>
+                  ))}
                 </div>
               </div>
 

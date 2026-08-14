@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, use as usePromise } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, Loader2, MoreHorizontal, ShieldOff, CheckCircle2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, Eye, Loader2, MoreHorizontal, ShieldOff, CheckCircle2, RotateCcw } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { AnciStatus, AuditReport, Finding, FindingSeverity, FindingStatus, EvidenceListResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -47,10 +47,18 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
     { value: "low", label: t.severityLow },
   ];
 
+  const IGNORED_STATUSES: FindingStatus[] = ["false_positive", "accepted_risk"];
+  const STATUS_TABS: { value: "active" | "ignored"; label: string }[] = [
+    { value: "active", label: t.tabActiveFindings },
+    { value: "ignored", label: t.tabIgnoredAlerts },
+  ];
+
   const [findings, setFindings] = useState<Finding[]>([]);
   const [missingRequirements, setMissingRequirements] = useState<Array<{ code: string; title: string }>>([]);
   const [anci, setAnci] = useState<AnciStatus | null>(null);
   const [severityFilter, setSeverityFilter] = useState<FindingSeverity | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<"active" | "ignored">("active");
+  const [detailFinding, setDetailFinding] = useState<Finding | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,10 +95,13 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  const filteredFindings = useMemo(
-    () => (severityFilter === "all" ? findings : findings.filter((f) => f.severity === severityFilter)),
-    [findings, severityFilter]
-  );
+  const filteredFindings = useMemo(() => {
+    const byStatus = findings.filter((f) =>
+      statusFilter === "ignored" ? IGNORED_STATUSES.includes(f.status) : !IGNORED_STATUSES.includes(f.status)
+    );
+    return severityFilter === "all" ? byStatus : byStatus.filter((f) => f.severity === severityFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findings, severityFilter, statusFilter]);
 
   async function handleGenerateReport() {
     setGenerating(true);
@@ -267,18 +278,31 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           <CardTitle className="text-base">{t.findings}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <Tabs value={severityFilter} onValueChange={(v) => setSeverityFilter(v as FindingSeverity | "all")}>
-            <TabsList>
-              {SEVERITY_TABS.map((tab) => (
-                <TabsTrigger key={tab.value} value={tab.value}>
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+          <div className="flex flex-col gap-3">
+            <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as "active" | "ignored")}>
+              <TabsList>
+                {STATUS_TABS.map((tab) => (
+                  <TabsTrigger key={tab.value} value={tab.value}>
+                    {tab.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <Tabs value={severityFilter} onValueChange={(v) => setSeverityFilter(v as FindingSeverity | "all")}>
+              <TabsList>
+                {SEVERITY_TABS.map((tab) => (
+                  <TabsTrigger key={tab.value} value={tab.value}>
+                    {tab.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </div>
 
           {filteredFindings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t.noFindingsForFilter}</p>
+            <p className="text-sm text-muted-foreground">
+              {statusFilter === "ignored" ? t.noIgnoredFindings : t.noFindingsForFilter}
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -303,39 +327,52 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
                     </TableCell>
                     {canReview ? (
                       <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm">
-                              <MoreHorizontal className="size-4" aria-hidden />
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => setDetailFinding(finding)}>
+                            <Eye className="size-3.5" aria-hidden />
+                            {t.viewDetails}
+                          </Button>
+                          {statusFilter === "ignored" ? (
+                            <Button variant="outline" size="sm" onClick={() => openStatusDialog(finding.id, "open")}>
+                              <RotateCcw className="size-3.5" aria-hidden />
+                              {t.reactivateAlert}
                             </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            {finding.status !== "false_positive" && (
-                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "false_positive")}>
-                                <ShieldOff className="size-3.5" aria-hidden />
-                                {t.markFalsePositive}
-                              </DropdownMenuItem>
-                            )}
-                            {finding.status !== "accepted_risk" && (
-                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "accepted_risk")}>
-                                <CheckCircle2 className="size-3.5" aria-hidden />
-                                {t.acceptRisk}
-                              </DropdownMenuItem>
-                            )}
-                            {finding.status !== "open" && (
-                              <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "open")}>
-                                <RotateCcw className="size-3.5" aria-hidden />
-                                {t.revertToOpen}
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                          ) : (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm">
+                                  <MoreHorizontal className="size-4" aria-hidden />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                {finding.status !== "false_positive" && (
+                                  <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "false_positive")}>
+                                    <ShieldOff className="size-3.5" aria-hidden />
+                                    {t.markFalsePositive}
+                                  </DropdownMenuItem>
+                                )}
+                                {finding.status !== "accepted_risk" && (
+                                  <DropdownMenuItem onClick={() => openStatusDialog(finding.id, "accepted_risk")}>
+                                    <CheckCircle2 className="size-3.5" aria-hidden />
+                                    {t.acceptRisk}
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </div>
                       </TableCell>
                     ) : isExpiredGuest ? (
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" className="opacity-50" onClick={() => setExpiredNotice(true)}>
-                          <MoreHorizontal className="size-4" aria-hidden />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => setDetailFinding(finding)}>
+                            <Eye className="size-3.5" aria-hidden />
+                            {t.viewDetails}
+                          </Button>
+                          <Button variant="ghost" size="sm" className="opacity-50" onClick={() => setExpiredNotice(true)}>
+                            <MoreHorizontal className="size-4" aria-hidden />
+                          </Button>
+                        </div>
                       </TableCell>
                     ) : null}
                   </TableRow>
@@ -353,6 +390,11 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           </DialogHeader>
           <p className="text-sm text-muted-foreground">{t.justificationDesc}</p>
           <div className="flex flex-col gap-3">
+            {(pendingChange?.status === "false_positive" || pendingChange?.status === "accepted_risk") && (
+              <Alert variant="destructive">
+                <AlertDescription>{t.consequenceWarning}</AlertDescription>
+              </Alert>
+            )}
             <div className="flex flex-col gap-2">
               <label htmlFor="justification" className="text-sm font-medium">
                 {t.justificationLabel}
@@ -381,6 +423,39 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={detailFinding !== null} onOpenChange={(open) => !open && setDetailFinding(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.detailsTitle}</DialogTitle>
+          </DialogHeader>
+          {detailFinding && (
+            <div className="flex flex-col gap-3 text-sm">
+              <div className="flex flex-col gap-1">
+                <span className="font-medium">{detailFinding.title}</span>
+                <span className="text-muted-foreground">{detailFinding.detail ?? t.detailsNoDetail}</span>
+              </div>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                <dt className="text-muted-foreground">{t.detailsEngine}</dt>
+                <dd className="font-medium">{detailFinding.source_engine}</dd>
+                <dt className="text-muted-foreground">{t.detailsDetected}</dt>
+                <dd className="font-medium">{new Date(detailFinding.detected_at).toLocaleString()}</dd>
+                {detailFinding.cve_id && (
+                  <>
+                    <dt className="text-muted-foreground">{t.detailsCve}</dt>
+                    <dd className="font-mono font-medium">{detailFinding.cve_id}</dd>
+                  </>
+                )}
+              </dl>
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setDetailFinding(null)}>
+                  {t.detailsClose}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

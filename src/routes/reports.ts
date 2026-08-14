@@ -12,6 +12,7 @@ import { calculateRiskScore } from "../services/riskScoring.js";
 import {
   buildAuditReportPdf,
   type ReportFinding,
+  type ReportIgnoredFinding,
   type ReportEvidenceIssue,
   type ReportEvidenceLedgerEntry,
 } from "../services/pdfReport.js";
@@ -50,7 +51,10 @@ reportsRouter.get(
       { data: evidences, error: evidencesError },
       { data: evidenceLedger, error: ledgerError },
     ] = await Promise.all([
-      supabase.from("findings").select("title, severity, status, detail, remediation").eq("audit_id", auditId),
+      supabase
+        .from("findings")
+        .select("title, severity, status, detail, remediation, justification_notes, reviewed_by")
+        .eq("audit_id", auditId),
       supabase
         .from("audit_evidences")
         .select("file_name, requirement_code, validation_errors")
@@ -86,6 +90,29 @@ reportsRouter.get(
       completionPercentage: coverage.completion_percentage,
     });
 
+    // Falsos positivos / riesgos aceptados van a su propia sección del PDF
+    // (a.md, "Sección de Falsos Positivos y Excepciones") en vez de
+    // mezclarse con el desglose de hallazgos activos de arriba.
+    const activeFindings = (findings ?? []).filter(
+      (f) => f.status !== "false_positive" && f.status !== "accepted_risk"
+    );
+    const ignoredFindingsRaw = (findings ?? []).filter(
+      (f) => f.status === "false_positive" || f.status === "accepted_risk"
+    );
+    const reviewerIds = [...new Set(ignoredFindingsRaw.map((f) => f.reviewed_by).filter((id): id is string => !!id))];
+    const reviewerNames = new Map<string, string | null>();
+    if (reviewerIds.length > 0) {
+      const { data: reviewers } = await supabase.from("profiles").select("id, full_name").in("id", reviewerIds);
+      for (const r of reviewers ?? []) reviewerNames.set(r.id, r.full_name);
+    }
+    const ignoredFindings: ReportIgnoredFinding[] = ignoredFindingsRaw.map((f) => ({
+      title: f.title,
+      severity: f.severity as FindingSeverity,
+      status: f.status as "false_positive" | "accepted_risk",
+      reviewedByName: f.reviewed_by ? (reviewerNames.get(f.reviewed_by) ?? null) : null,
+      justificationNotes: f.justification_notes,
+    }));
+
     const generatedAt = new Date();
 
     // Hash de integridad del documento: no es una firma digital legalmente
@@ -116,7 +143,8 @@ reportsRouter.get(
       generatedAt,
       riskScore,
       coverage,
-      findings: (findings ?? []) as ReportFinding[],
+      findings: activeFindings as ReportFinding[],
+      ignoredFindings,
       invalidEvidences: (evidences ?? []) as ReportEvidenceIssue[],
       anci: isAnciFramework
         ? {

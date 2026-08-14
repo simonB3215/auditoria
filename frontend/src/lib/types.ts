@@ -135,10 +135,14 @@ export interface AuditReport {
 
 export interface DashboardSummary {
   totalAssets: number;
+  networkAssetsCount: number;
   totalAudits: number;
   auditsByStatus: Record<AuditStatus, number>;
   findingsBySeverity: Record<FindingSeverity, number>;
-  averageCoveragePercentage: number;
+  ignoredFindingsCount: number;
+  averageCoveragePercentage: number | null;
+  securityHealthScore: number | null;
+  anciCompliance: { sePercentage: number; oivPercentage: number } | null;
   recentAudits: Audit[];
 }
 

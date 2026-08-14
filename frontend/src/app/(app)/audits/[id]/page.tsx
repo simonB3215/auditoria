@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use as usePromise } from "react";
 import Link from "next/link";
-import { ArrowLeft, FileText, History, Loader2, ScanSearch } from "lucide-react";
+import { ArrowLeft, FileText, HelpCircle, History, Loader2, ScanSearch, ShieldCheck } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Audit, ComplianceRequirement, EvidenceListResponse, EvidenceUploadResponse } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -11,6 +11,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { AuditStatusBadge } from "@/components/audit-status-badge";
 import { CoverageMatrix } from "@/components/coverage-matrix";
 import { EvidenceUpload } from "@/components/evidence-upload";
@@ -31,6 +43,8 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
 
   const [scanning, setScanning] = useState(false);
   const [scanNotice, setScanNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+  const [scanConfirmOpen, setScanConfirmOpen] = useState(false);
+  const [ownershipChecked, setOwnershipChecked] = useState(false);
 
   function loadAll() {
     setLoading(true);
@@ -70,7 +84,7 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
     return () => clearInterval(interval);
   }, [id, audit?.status]);
 
-  async function handleRunScan() {
+  function openScanConfirm() {
     if (!canWrite) {
       setScanNotice({
         kind: "error",
@@ -78,6 +92,12 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
       });
       return;
     }
+    setOwnershipChecked(false);
+    setScanConfirmOpen(true);
+  }
+
+  async function handleRunScan() {
+    setScanConfirmOpen(false);
     setScanning(true);
     setScanNotice(null);
     try {
@@ -149,11 +169,11 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
             variant="outline"
             size="sm"
             className={!canWrite ? "opacity-50" : undefined}
-            onClick={handleRunScan}
+            onClick={openScanConfirm}
             disabled={scanning}
           >
             {scanning ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ScanSearch className="size-4" aria-hidden />}
-            {scanning ? dict.guestPilot.runningScan : dict.guestPilot.runScan}
+            {scanning ? dict.guestPilot.runningScan : t.runScanNetwork}
           </Button>
           <Button asChild variant="outline" size="sm">
             <Link href={`/audits/${id}/report`}>
@@ -170,37 +190,76 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
         </Alert>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t.coverageMatrix}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {coverage && (
-              <CoverageMatrix
-                requirements={documentaryRequirements}
-                coveredCodes={coverage.covered_requirements}
-                completionPercentage={coverage.completion_percentage}
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t.uploadEvidence}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isExpiredGuest ? (
-              <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 opacity-60">
-                <p className="text-sm font-medium">{dict.guestPilot.expiredTitle}</p>
-                <p className="text-sm text-muted-foreground">{dict.guestPilot.expiredMessage}</p>
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.networkModuleEyebrow}</p>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-semibold">{t.networkGuaranteeTitle}</p>
+                <p className="text-sm text-muted-foreground">{t.networkGuaranteeBody}</p>
               </div>
-            ) : (
-              <EvidenceUpload auditId={id} requirements={documentaryRequirements} onUploaded={handleUploaded} />
-            )}
+            </div>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button type="button" variant="link" size="sm" className="w-fit self-start px-0 text-xs">
+                  <HelpCircle className="size-3.5" aria-hidden />
+                  {t.dbPrivacyTrigger}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.dbPrivacyTitle}</DialogTitle>
+                  <DialogDescription>{t.dbPrivacyBody}</DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button">{t.dbPrivacyClose}</Button>
+                  </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
+        <p className="text-xs text-muted-foreground">{t.networkModuleLegend}</p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.filesModuleEyebrow}</p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t.coverageMatrix}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {coverage && (
+                <CoverageMatrix
+                  requirements={documentaryRequirements}
+                  coveredCodes={coverage.covered_requirements}
+                  completionPercentage={coverage.completion_percentage}
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t.uploadEvidence}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <p className="text-xs text-muted-foreground">{t.filesModuleLegend}</p>
+              {isExpiredGuest ? (
+                <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 opacity-60">
+                  <p className="text-sm font-medium">{dict.guestPilot.expiredTitle}</p>
+                  <p className="text-sm text-muted-foreground">{dict.guestPilot.expiredMessage}</p>
+                </div>
+              ) : (
+                <EvidenceUpload auditId={id} requirements={documentaryRequirements} onUploaded={handleUploaded} />
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <Card>
@@ -240,6 +299,34 @@ export default function AuditDetailPage({ params }: { params: Promise<{ id: stri
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={scanConfirmOpen} onOpenChange={setScanConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.scanConfirmTitle}</DialogTitle>
+            <DialogDescription>{t.scanConfirmBody}</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-start gap-2 rounded-md border p-3">
+            <Checkbox
+              id="ownership-declaration"
+              checked={ownershipChecked}
+              onCheckedChange={(checked) => setOwnershipChecked(checked === true)}
+            />
+            <Label htmlFor="ownership-declaration" className="text-sm font-normal leading-snug">
+              {t.scanConfirmCheckbox}
+            </Label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setScanConfirmOpen(false)}>
+              {t.scanConfirmCancel}
+            </Button>
+            <Button type="button" onClick={handleRunScan} disabled={!ownershipChecked}>
+              <ScanSearch className="size-4" aria-hidden />
+              {t.scanConfirmProceed}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

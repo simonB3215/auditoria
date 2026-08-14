@@ -4,6 +4,7 @@ import { errorHandler, notFoundHandler } from "./middlewares/errorHandler.js";
 import { healthRouter } from "./routes/health.js";
 import { usersRouter } from "./routes/users.js";
 import { auditsRouter } from "./routes/audits.js";
+import { sandboxRouter } from "./routes/sandbox.js";
 import { evidencesRouter } from "./routes/evidences.js";
 import { assetsRouter } from "./routes/assets.js";
 import { scansRouter } from "./routes/scans.js";
@@ -31,6 +32,11 @@ export function createApp(): Express {
 
   app.use(healthRouter);
   app.use("/api/v1", usersRouter);
+  // sandboxRouter antes que auditsRouter a propósito: GET/DELETE
+  // /audits/:id de auditsRouter matchearía "sandbox" como si fuera un
+  // :id (y lo rechazaría por no ser un UUID) si se registrara primero —
+  // Express prueba las rutas en el orden en que se montan los routers.
+  app.use("/api/v1", sandboxRouter);
   app.use("/api/v1", auditsRouter);
   app.use("/api/v1", evidencesRouter);
   app.use("/api/v1", assetsRouter);

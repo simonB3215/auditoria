@@ -212,8 +212,34 @@ SESIÓN..."):
   válido — el síntoma de "expiración prematura" que reporta a.md. Se agregó
   un interceptor de respuesta que, ante un 401, intenta
   `supabase.auth.refreshSession()` una vez y reintenta la request original;
-  si el refresh también falla, el error se propaga igual que antes (no hay
-  loop ni redirect forzado nuevo).
+  si el refresh también falla (o la request reintentada sigue devolviendo
+  401), ver el punto siguiente.
+- **Redirect global a `/login` en 401 irrecuperable (a.md, "FIX MANEJO DE
+  AUTENTICACIÓN Y REDIRECCIÓN 401")**: antes, cuando el refresh-and-retry
+  de arriba también fallaba, el error simplemente se propagaba y cada
+  página (`useProfile`, `/dashboard`) lo mostraba como un mensaje de error
+  suelto — la sesión quedaba "muerta" en el cliente sin que el usuario
+  entendiera por qué. Ahora el interceptor de `api.ts` cierra la sesión de
+  Supabase (`signOut()`) y redirige a `/login` en cualquier 401 que
+  sobreviva al retry, **excepto** `PROFILE_NOT_FOUND` — ese código es un
+  401 "de aplicación" (token válido, todavía sin fila en `profiles`) que
+  el layout de `/(app)` sigue redirigiendo a `/onboarding`, no a `/login`;
+  tratarlo igual que un token inválido habría roto el flujo de onboarding
+  de cuentas recién confirmadas. Un flag de módulo evita cerrar sesión dos
+  veces si varias requests en paralelo (`/users/me` y
+  `/dashboard/summary`) fallan al mismo tiempo.
+- **`ensureSession()` antes de disparar `/users/me` y
+  `/dashboard/summary`**: el middleware de Next (cookies, lado servidor)
+  ya garantiza que no se llega a una ruta de `/(app)` sin sesión, pero la
+  hidratación de esa misma sesión en el cliente de Supabase del browser
+  (`localStorage`) es asíncrona — si `useProfile` o `/dashboard` disparan
+  su fetch en el primer render sin esperarla, el interceptor de request
+  no encuentra token todavía y el backend responde 401 real, que era
+  exactamente el síntoma que reportaba a.md en esos dos endpoints. Ambos
+  hooks ahora esperan `ensureSession()` (definida en `api.ts`, reusa el
+  mismo `redirectToUnauthorized`) antes de llamar a la API; en el caso
+  límite de que de verdad no haya sesión, redirige directo en vez de
+  disparar una request condenada a fallar.
 - **Cambio de contraseña propio (`/settings/account`, página nueva)**:
   formulario mínimo que llama `supabase.auth.updateUser({ password })`
   directo desde el browser (no pasa por el backend, igual que el login) y
@@ -365,6 +391,217 @@ colapsable y las organizaciones desacopladas de la gestión de usuarios.
 5. `GET /audits/:id/report` calcula el puntaje de riesgo, genera un PDF, lo
    sube a Storage, y devuelve un signed URL de descarga de corta duración.
 
+### Clarificación de módulos en `/audits/[id]` y `/onboarding`
+En `/audits/[id]` convivían dos flujos con requisitos muy distintos — el
+escaneo técnico de red (Nmap, automático, sin archivos) y la carga manual
+de evidencia documental — sin ninguna señal visual de que fueran cosas
+separadas, lo que generaba confusión sobre si el escaneo requería subir
+algo o dar credenciales (a.md, "CLARIFICACIÓN DE MÓDULOS DE AUDITORÍA Y
+UX").
+- **Banner de garantía del Módulo A** (`ShieldCheck`, encabezado "Módulo A
+  · Seguridad de Red y Perímetro"): mensaje fijo aclarando que el escaneo
+  vía Nmap es 100% externo — no sube archivos, no pide credenciales, no
+  accede a datos internos — colocado antes del botón "Ejecutar Escaneo
+  Técnico de Perímetro".
+- **Modal de privacidad de bases de datos**: un botón "¿Cómo evaluamos la
+  seguridad de sus bases de datos?" dentro del banner abre un diálogo
+  explicando que solo se comprueba desde afuera si puertos como
+  PostgreSQL 5432 o MySQL 3306 están expuestos o sin TLS — nunca hay
+  conexión real a la base de datos del cliente.
+- **Módulo B separado visualmente**: la matriz de cobertura y la carga de
+  evidencia (Excel, PDF, esquemas SQL) quedan bajo un eyebrow "Módulo B ·
+  Auditoría de Archivos y Esquemas (Opcional)", dejando explícito que es
+  un paso manual y opcional, no un requisito del escaneo técnico.
+- **Nota en `/onboarding`**: un párrafo debajo del formulario de alta de
+  organización adelanta la misma distinción antes de que el usuario
+  llegue a `/audits/[id]`.
+- **Desviación de a.md**: el prompt pedía además separar "Escáner de Red"
+  y "Analizador de Archivos" como dos ítems de navegación (Sidebar/Tabs)
+  distintos. No existe una página de "análisis de archivos" independiente
+  — la carga de evidencia solo ocurre dentro del detalle de una auditoría
+  puntual, nunca como sección propia del menú — así que la separación se
+  resolvió donde realmente ocurre la confusión (dentro de `/audits/[id]`)
+  en vez de crear un ítem de nav sin una página real detrás.
+
+### Cuentas de Auth "colgadas" sin perfil (`/onboarding`)
+a.md pedía un rol `admin` y un bypass de `/organizations/new` para
+"usuarios administradores" que no existen en el esquema real — no hay
+ningún literal `'admin'` en `UserRole` (`ciso` / `auditor` /
+`auditor_guest` / `viewer` — `src/types/express.d.ts`), y "ser admin de
+plataforma" es el flag aparte `profiles.is_platform_admin`, que se activa
+manualmente (`npm run admin:promote -- email`) **sobre un perfil que ya
+existe**. Investigar con datos reales en vez de asumir el esquema del
+prompt encontró la causa real: una cuenta de Supabase Auth puede quedar
+"colgada" — creada, pero sin haber completado nunca `POST
+/onboarding/organization` (ej. alguien cierra la pestaña entre el
+`signUp` y el paso de onboarding) — y al volver a loguearse, `/users/me`
+devuelve (correctamente) `401 PROFILE_NOT_FOUND`, mandando de nuevo a
+`/onboarding`. Para quien ya tenía la cuenta desde hace días, esa pantalla
+se sentía como "me pide registrarme de nuevo" sin dejar claro que el
+problema era solo el paso de organización, no la cuenta en sí.
+- **`/onboarding` ahora muestra el email de la sesión activa** y aclara
+  explícitamente "No es un registro nuevo — es el último paso para tu
+  cuenta existente", con un link "¿No sos vos? Cerrar sesión" para quien
+  llegó ahí por error de cuenta.
+- **Desviación de a.md**: no se implementó el rol `admin` ni el bypass de
+  organización porque no hay ningún "org por defecto/global" a la que
+  asignar automáticamente — inventar esa asignación habría creado un
+  segundo mecanismo de admin en conflicto con `is_platform_admin`, que ya
+  funciona (`/admin/organizations`, `/admin/users`, gate de
+  `requirePlatformAdmin` en el backend). En cambio se atacó la confusión
+  real reportada por el usuario con la copy de arriba.
+
+### Rediseño de intuitividad y advertencias críticas (a.md, "REDISEÑO COMPLETO DE UI/UX")
+- **Puntaje de Salud de Seguridad** en `/dashboard`: `GET
+  /dashboard/summary` agrega `securityHealthScore` (promedio de
+  `audits.risk_score` — pese al nombre de la columna, 100 es perfecto,
+  ver `src/services/riskScoring.ts` — entre todas las auditorías con
+  reporte generado, no solo las 5 "recientes" que ya traía el summary).
+  El frontend lo traduce a 3 etiquetas simples reusando la paleta de
+  severidad ya validada (`SEVERITY_VISUALS`) en vez de inventar un cuarto
+  set de colores: **Excelente** (≥85), **Atención Necesaria** (40-84),
+  **Riesgo Crítico** (&lt;40) — mismos umbrales que ya usaba
+  `complianceLevel`. `null` cuando ninguna auditoría tiene puntaje
+  todavía, para no mostrar un 0 engañoso.
+- **Confirmación legal antes de escanear** (`/audits/[id]`, Ley N°
+  21.459): el botón "Ejecutar Escaneo Técnico de Perímetro" ya no dispara
+  la request directo — abre un modal con una declaración de
+  responsabilidad ("Declaro... que soy propietario o cuento con
+  autorización explícita...") detrás de un checkbox obligatorio; el botón
+  de confirmar queda deshabilitado hasta marcarlo.
+- **Advertencia de consecuencias al ignorar un hallazgo**: el modal de
+  justificación (ya existente, ver "Gestión de falsos positivos" más
+  abajo) ahora muestra un `Alert` explícito cuando el cambio es a "falso
+  positivo" o "riesgo aceptado", aclarando que el hallazgo queda excluido
+  de reportes oficiales y del cálculo de cumplimiento.
+- **Pestaña "Alertas Ignoradas"** en `/audits/[id]/report`: los hallazgos
+  se separan en dos tabs (Activos / Ignorados) además del filtro por
+  severidad que ya existía. En la pestaña de ignorados, la acción es un
+  botón directo "Reactivar Alerta" (reusa el mismo `PATCH
+  /findings/:id/status` a `open`) en vez del menú desplegable de la
+  pestaña activa.
+- **"Ver detalles" por hallazgo**: nuevo modal que muestra el campo
+  `finding.detail` (la descripción técnica cruda, ej. "Nmap detectó el
+  puerto 5432/tcp abierto ejecutando postgresql...") junto a motor,
+  fecha de detección y CVE — antes se guardaba en la base pero no se
+  mostraba en ningún lado de la UI, solo se veían el título humano y la
+  remediación.
+- **Mensaje de sesión caducada**: el redirect a `/login` que ya hacía
+  `redirectToUnauthorized` (ver "Persistencia de sesión") ahora agrega
+  `?reason=session_expired`, y `/login` lo traduce a un aviso visible en
+  vez del redirect silencioso de antes ("Tu sesión caducó por seguridad.
+  Por favor, vuelve a iniciar sesión.") — mismo patrón que ya existía
+  para `?error=oauth_failed`.
+- **Desviación de a.md**: no se reorganizó la navegación en dos bloques
+  "Seguridad de Red & Perímetro" / "Análisis de Planillas & Esquemas" —
+  la navegación de `/(app)` es un header horizontal con 5 destinos reales
+  (Panel, Activos, Retención, Mi cuenta, Admin), ninguno de los cuales es
+  "el escáner de red" o "el analizador de archivos": esas dos cosas son
+  acciones dentro de una auditoría puntual (`/audits/[id]`), no páginas
+  del menú principal — la separación visual ya se resolvió ahí mismo en
+  la fase anterior (ver "Clarificación de módulos"). Tampoco se forzó el
+  redirect automático de `is_platform_admin` a `/admin` en cada login:
+  un platform admin también es dueño de organizaciones propias y navegar
+  siempre forzado a `/admin` le saca acceso directo a su propio
+  `/dashboard`; ya puede ir a `/admin` con un click desde el nav, y la
+  redirección real que corregía a.md (onboarding forzado) se arregló en
+  la fase anterior.
+
+### Repintado de tema: "Clean Enterprise / Cyber-Minimalist" (a.md, "REDISEÑO VISUAL Y ESTRUCTURAL COMPLETO")
+Tercera resubmisión casi idéntica del mismo prompt de rediseño de UX —
+todo lo funcional (banners, modales legales, pestañas de excepciones,
+mensajes de sesión, score de salud) ya estaba cubierto por las dos fases
+anteriores. Lo único nuevo fue un pedido explícito de reemplazar la
+paleta de colores, que sí se implementó, a diferencia de los ítems ya
+descartados en fases previas (sidebar en 2 zonas, selector de
+organización en el topbar, selector de alcance "columna" en falsos
+positivos, redirect forzado de admin) que siguen sin aplicar por las
+mismas razones ya documentadas — ninguno de esos tres corresponde a la
+arquitectura real de la app (nav de un solo nivel, un usuario = una
+organización, findings de infraestructura no de datos tabulares).
+- **Paleta azul profundo/slate reemplaza el gris neutro** (`frontend/src/app/globals.css`):
+  el tema por defecto de shadcn usaba grises puros (0 de chroma OKLCH)
+  para fondo/texto/primary/border. Se reemplazaron los tokens de
+  `:root` y `.dark` por una escala slate (fondo `slate-50`/`slate-950`,
+  cards blancas/`slate-900`, texto `slate-900`/`slate-100`) con
+  `--primary`/`--ring`/`--accent` en azul (`blue-700` claro,
+  `blue-500` oscuro) — cambio centralizado en un solo archivo de
+  tokens CSS, sin tocar la estructura de ningún componente, así que se
+  propaga automáticamente a toda la app (botones, badges, focus rings,
+  progress bars) sin trabajo adicional por pantalla.
+- **Severidad crítica → rojo cálido, severidad baja → esmeralda**: el
+  crítico ya era un rojo cálido cercano a Tailwind `red-600`, se alineó
+  al valor exacto para que combine con el nuevo `--destructive`. El de
+  severidad baja pasó de verde puro (`#0ca30c`) a esmeralda
+  (`#059669`, `emerald-600`), como pedía a.md explícitamente para
+  "estados de salud". Alta/media quedaron sin cambios — a.md no
+  especificó esos dos.
+- **No se tocaron**: radios de borde (ya eran `rounded-xl` en `Card`
+  antes de este cambio, ver `components/ui/card.tsx`), la librería de
+  componentes (sigue siendo shadcn/ui — no se agregó Tremor, que ni
+  siquiera se menciona como dependencia instalada), ni los colores de
+  gráficos de costos/FinOps (`--chart-*`, `--cost-*`, `--finops-*`) —
+  fuera del alcance que pidió a.md y con riesgo real de romper la
+  legibilidad de esos gráficos ya validados.
+- Verificado con Playwright contra Supabase real en `/dashboard`,
+  `/audits/[id]/report` y `/admin`, en modo claro y oscuro.
+
+### Rediseño del dashboard y first-time UX (a.md, "REDISEÑO COMPLETO DEL DASHBOARD Y FIRST-TIME UX")
+- **Fix de la métrica de cumplimiento engañosa**: `GET /dashboard/summary`
+  devolvía `averageCoveragePercentage: 100` cuando la organización todavía
+  no tenía ninguna auditoría (`coverages.length === 0`) — una cuenta
+  recién creada mostraba "100% de cumplimiento" sin haber auditado nada.
+  Ahora devuelve `null` en ese caso; el campo pasó a `number | null` en el
+  tipo del frontend.
+- **Hero de bienvenida para cuentas nuevas** (`totalAudits === 0`):
+  reemplaza toda la vista (que si no hubiera tenido el fix de arriba
+  habría mostrado varias tarjetas en 0%/100% sin contexto) por un único
+  banner: título, subtítulo mencionando Ley 21.663, botón "Ejecutar
+  Primer Escaneo de Perímetro" (a `/audits/new`) y el badge de privacidad
+  "0% lectura de datos privados".
+- **Tarjetas del dashboard reestructuradas**: de las 3 genéricas
+  anteriores (activos/cobertura/auditorías) a 3 específicas + el Puntaje
+  de Salud como tarjeta héroe aparte (ya existía, se mantuvo con ese
+  tratamiento más grande en vez de bajarla a una tarjeta más — es el
+  número más importante del dashboard, objetivo #1 de a.md): **Dominio/IP
+  a Auditar** (cuenta de activos `ip`/`cidr`/`domain`, nuevo
+  `networkAssetsCount` en el summary), **Cumplimiento Ley 21.663 (ANCI)**
+  (del audit `ley_21663_cl` más reciente, no un promedio — cada auditoría
+  ANCI es una foto de cumplimiento puntual; `null`/"Sin auditoría ANCI
+  todavía" si la organización no tiene ninguna), y **Falsos Positivos /
+  Excepciones** (`ignoredFindingsCount`, cuenta de findings
+  `false_positive` + `accepted_risk` en toda la organización).
+- **Formulario "Nueva auditoría"**: framework por defecto cambiado de
+  `iso27001` a `ley_21663_cl` (el camino de menor fricción — tiene el
+  módulo técnico automático sin archivos), y nota explicativa aclarando
+  que después de crear la auditoría van a estar disponibles tanto el
+  escaneo automático como la carga opcional de evidencia.
+- **Desviación de a.md**: el formulario pedía además un "selector visual
+  claro" entre tipo de escaneo (red vs. archivos) al crear la auditoría.
+  No se implementó como un control funcional porque una auditoría no
+  tiene un "tipo" de escaneo que elegir — cualquier auditoría, sin
+  importar el framework, tiene ambos módulos disponibles después de
+  creada (ver "Clarificación de módulos" más arriba); un selector ahí
+  sería decorativo y no cambiaría ningún comportamiento real, así que se
+  reemplazó por la nota explicativa de arriba en su lugar.
+- Verificado con Playwright contra Supabase real: cuenta sin auditorías
+  (hero, sin 100% engañoso, CTA funcional) y cuenta con datos (3
+  tarjetas + score + framework por defecto + nota de módulos).
+
+### Botón para descartar el hero de bienvenida (a.md, "FIX CONDICIONAL DE BIENVENIDA")
+El orden condicional que pedía este prompt (loading → error → `totalAudits
+=== 0` → dashboard completo) ya estaba implementado correctamente desde la
+fase anterior — `summary` arranca en `null`, así que mientras `loading` es
+`true` se muestra el skeleton y `totalAudits` nunca se evalúa antes de que
+la respuesta llegue; no había ningún parpadeo que corregir. Lo único
+genuinamente nuevo era el punto 3 del prompt:
+- **Botón "Omitir, ir al panel"** en el hero: guarda
+  `aegis-dashboard-hero-dismissed` en `localStorage` (mismo patrón que
+  `aegis-theme`) y muestra el dashboard completo con sus estados vacíos
+  (0 activos, "Sin auditoría ANCI todavía", etc.) en su lugar. Persiste
+  entre recargas de página — se verificó con Playwright que tras
+  descartarlo y recargar, el hero no vuelve a aparecer.
+
 ### Registro de activos accesible y guiado (`/assets`)
 El modal "Registrar recurso para auditoría" (antes "Agregar activo") está
 pensado para que lo complete cualquier perfil, no solo gente técnica —
@@ -380,9 +617,15 @@ a.md, "Rediseño accesible y guiado del modal Agregar activo".
   falla, se detiene la operación del negocio"), armadas sobre un
   `RadioGroup` de Radix — navegable con flechas de teclado igual que un
   grupo de radios nativo.
-- **Etiquetas como chips**: en vez de un campo de texto libre, hay chips
-  predefinidos (Producción, Sitio Web, Interno, Backend, etc.) que se
-  activan con un clic, más un campo aparte para etiquetas propias.
+- **Etiquetas como `TagInput` unificado** (a.md, "Consolidación de
+  Etiquetas" — reemplaza el diseño anterior de dos mecanismos separados:
+  chips predefinidos + un campo de texto libre aparte): ahora es un único
+  componente — las etiquetas activas aparecen como píldoras removibles
+  (`×`) dentro de la misma caja donde se escriben etiquetas propias
+  (Enter o coma para agregar), y debajo quedan como sugerencias de un
+  clic solo las predefinidas (Producción, Sitio Web, Interno, Backend,
+  etc.) que todavía no se agregaron — al quitarlas, vuelven a aparecer
+  como sugerencia en vez de perderse.
 - **Validación en tiempo real sin dependencias nuevas**: el prompt
   original pedía Zod/React Hook Form — es un solo formulario chico, así
   que se adaptó con funciones de validación puras por tipo (regex de
@@ -403,6 +646,125 @@ a.md, "Rediseño accesible y guiado del modal Agregar activo".
 - **Botones**: "Guardar" en color primario con spinner de carga
   (`Loader2` animado, mismo patrón que el resto de la app) y un botón
   "Cancelar" explícito al lado, además del cierre con la "X" o `Esc`.
+
+### Validación de IP privada y garantía de escaneo (a.md, "REDISEÑO DE UX Y VALIDACIONES EN REGISTRO DE RECURSOS")
+- **Advertencia de IP privada en tiempo real**: mientras se escribe (sin
+  esperar a salir del campo, a diferencia de los errores de formato de
+  arriba), si el valor cae en un rango privado (`10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`) se muestra una
+  advertencia amarilla — no bloqueante, porque una IP privada es
+  sintácticamente válida, solo no es alcanzable desde Internet para el
+  escaneo externo. Aplica a los tipos `ip` y `cidr` (evaluando solo la
+  parte de red antes del `/`).
+- **Badge de garantía de escaneo**: debajo del selector de tipo, para
+  `ip`/`cidr`/`domain` (los tipos que sí escanea Nmap) se muestra
+  "Escaneo externo de red. Cero acceso a datos privados." — no aparece
+  para `repository`/`cloud_server`, que quedan fuera del escaneo de red
+  (mismo criterio que ya documentaba el flujo de una auditoría más
+  arriba).
+- Verificado con Playwright: badge visible para IP/dominio y ausente para
+  repositorio, advertencia de IP privada aparece con `192.168.1.50` y
+  desaparece con `8.8.8.8`, TagInput agrega/quita etiquetas predefinidas
+  y personalizadas correctamente.
+
+### Selector de tipo simplificado a perímetro externo (a.md, "SIMPLIFICACIÓN DE TIPOS DE RECURSOS")
+El selector de `Tipo` del modal de registro quedó limitado a **Dirección
+IP Pública** y **Dominio / Sitio Web** — los dos únicos tipos que Nmap
+escanea sin pedirle nada al usuario. `Rango CIDR`, `Repositorio Git` y
+`Servidor Cloud` generaban desconfianza (sugieren acceso a código fuente
+o credenciales de nube) y se sacaron de ahí.
+- **Cambio acotado al selector de creación, no al schema**: `AssetType`
+  (backend y frontend) sigue teniendo los 5 valores, y el filtro de tipo
+  de la tabla (`/assets`) sigue mostrando los 5 — se creó
+  `REGISTRABLE_ASSET_TYPES` como un array aparte solo para el `<Select>`
+  del modal, en vez de tocar el enum. No había ningún activo real con
+  esos tres tipos en la base al momento del cambio (se verificó antes de
+  tocar nada), pero aunque hubiera habido, esta forma del cambio no los
+  habría roto — solo impide crear nuevos desde este modal.
+- **Etiquetas reforzadas**: "Dirección IP" → "Dirección IP Pública",
+  "Dominio" → "Dominio / Sitio Web", para dejar explícito que se espera
+  una IP alcanzable desde Internet.
+- **Nota redirigiendo a la carga de evidencia**: a.md pedía una tercera
+  opción "Esquema de BD / Archivo (Opcional)" en el mismo desplegable.
+  No se agregó como un tipo de activo más — un archivo Excel/SQL no es
+  algo que se pueda verificar o escanear como una IP o un dominio, es la
+  evidencia documental que ya se sube por auditoría (Módulo B, ver
+  "Clarificación de módulos" más arriba). En su lugar, el modal muestra
+  una nota fija aclarando que para eso no hace falta registrar nada acá.
+- Verificado con Playwright: el desplegable muestra exactamente 2
+  opciones (IP Pública, Dominio) y ninguna de las tres eliminadas; la
+  nota sobre planillas/esquemas es visible.
+
+### Módulo de simulación / sandbox (a.md, "MODULO DE SIMULACIÓN (SANDBOX) Y GENERACIÓN DE INFORME TÉCNICO COMPLETO")
+Deja probar el flujo completo — escaneo, hallazgos, descarte de falsos
+positivos, reporte PDF — sin depender de tener ya un dominio propio
+verificado. Botón "Cargar Escaneo de Prueba" visible en el hero de
+bienvenida (cuentas nuevas) y como tarjeta propia en el dashboard normal
+("Modo simulación"), que pasa a "Limpiar Simulación" una vez que existe
+una.
+- **`POST/GET/DELETE /api/v1/audits/sandbox`** (`src/routes/sandbox.ts`,
+  montado en `app.ts` **antes** que `auditsRouter` — si no, `GET
+  /audits/:id` de ese router capturaría "sandbox" como si fuera un `:id`
+  y lo rechazaría por no ser un UUID antes de llegar acá). Sin `is_demo`
+  ni ninguna columna nueva: el audit de simulación se identifica por un
+  título fijo (`"Auditoría de Simulación (Sandbox)"`) scoped a la
+  organización — evita una migración para un flag que solo le importa a
+  este endpoint. Es idempotente: si ya existe una simulación, `POST` la
+  devuelve en vez de duplicarla.
+- **Escaneo real, no simulado**: la primera versión insertaba hallazgos
+  fabricados a mano contra un dominio ficticio, sin tocar Nmap — corregido
+  a pedido explícito para que sea un escaneo de verdad. `POST
+  /audits/sandbox` encola un job real en el mismo `scanQueue`/`scanWorker`
+  que usa `POST /audits/:id/run-scan` (`scans.ts`), contra
+  `scanme.nmap.org` (`45.33.32.156`) — el host que el propio proyecto Nmap
+  publica y mantiene explícitamente como target autorizado para pruebas
+  (nmap.org/book/testing.html), así que es legal escanearlo de verdad sin
+  pedirle a nadie que "sea dueño" de un dominio. Se registra como activo
+  `ip` (no `domain`) para no chocar con el índice único global de dominios
+  entre organizaciones — un `ip` solo es único dentro de la organización,
+  así que cada organización puede correr su propia simulación en paralelo
+  sin pisarse. El activo se marca `verified` directo (autoatestación,
+  mismo criterio que cualquier IP real) y el audit queda `queued` →
+  `running` → `completed`/`failed` igual que un escaneo real — la UI de
+  `/audits/[id]` (que ya hace polling cada 3s) no necesitó ningún cambio.
+- **RLS real, no supuesta**: se intentó primero escribir `findings`
+  directo con el cliente del usuario y falló con 400 — esa tabla no tiene
+  policy de `INSERT` para clientes autenticados (`db/schema.sql` — "solo
+  lectura desde el cliente, escritura vía service_role desde el worker de
+  escaneo"), a propósito. Como ahora el escaneo es real, `sandbox.ts` ya
+  ni siquiera toca `findings`/`scan_runs` directamente — los llena el
+  worker real, igual que a cualquier auditoría. Limpiar la simulación sí
+  respeta la policy real de `audits_delete` (`current_user_role() =
+  'ciso'`, un `auditor` no puede borrar ni auditorías reales ni la
+  simulación) — el `DELETE` quedó restringido a `ciso` en vez de replicar
+  el permiso más laxo de creación.
+- **Limpieza sin tocar tablas manualmente de más**: borrar el `audits`
+  alcanza — `findings`, `scan_runs` y `audit_assets` tienen `on delete
+  cascade` hacia `audits` — el activo (`45.33.32.156`) se borra aparte
+  porque no cuelga de `audits`. a.md mencionaba una tabla
+  `exceptions_whitelist` que no existe en el schema (los falsos
+  positivos/riesgos aceptados son un `status` en `findings`, no una tabla
+  aparte); no se creó nada nuevo para eso.
+- **Sección "Falsos Positivos y Excepciones Aplicadas" en el PDF**
+  (`src/services/pdfReport.ts` + `reports.ts`): el desglose de hallazgos
+  del reporte ahora solo muestra los activos — los descartados
+  (`false_positive`/`accepted_risk`) se separaron a esta sección nueva,
+  con quién los descartó (`profiles.full_name` resuelto desde
+  `reviewed_by`) y la nota de justificación guardada, en vez de
+  mezclarse sin distinción en el mismo listado.
+- **Nmap no estaba instalado en la máquina de desarrollo** — se instaló
+  vía `winget install Insecure.Nmap` (confirmado con el usuario antes,
+  por ser una instalación de software a nivel de sistema) para poder
+  verificar el escaneo de punta a punta.
+- Verificado de punta a punta contra el backend, Redis/BullMQ y Supabase
+  reales: un smoke test disparó el escaneo real y esperó a que terminara
+  (~12s), confirmando 6 hallazgos genuinos contra `scanme.nmap.org`
+  (puertos SSH/HTTP abiertos, cabeceras de seguridad faltantes) y el
+  `scan_runs` correspondiente; también el ciclo completo de idempotencia,
+  descarte de falso positivo, generación de PDF y limpieza. Con Playwright
+  en la UI: botón en el hero, redirect al audit, polling de estado hasta
+  "Completado", hallazgos reales visibles en `/audits/[id]/report`,
+  cumplimiento ANCI calculado a partir de ellos (43%/33%).
 
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.

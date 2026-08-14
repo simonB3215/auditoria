@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { LogOut, ShieldCheck } from "lucide-react";
 import { api, getApiErrorMessage } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,11 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 /**
  * Paso final del registro para quienes confirmaron su email y ya tienen
  * sesión de Supabase, pero todavía no tienen `profiles` (ver /register).
+ * También es el destino de cuentas viejas que se crearon en Auth pero
+ * nunca terminaron este paso — para esas, la pantalla se sentía como "me
+ * pide registrarme de nuevo" sin dejar claro que la cuenta ya existía
+ * (a.md, "FIX DE ROL ADMIN Y REDIRECCIÓN DE ONBOARDING"), así que se
+ * muestra el email de la sesión activa y la opción de cerrarla.
  */
 export default function OnboardingPage() {
   const router = useRouter();
@@ -25,6 +31,19 @@ export default function OnboardingPage() {
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setSessionEmail(data.user?.email ?? null));
+  }, []);
+
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -52,6 +71,18 @@ export default function OnboardingPage() {
           <ShieldCheck className="mb-2 size-8 text-primary" aria-hidden />
           <CardTitle>{t.title}</CardTitle>
           <CardDescription>{t.subtitle}</CardDescription>
+          {sessionEmail && (
+            <div className="mt-1 flex flex-col items-center gap-1">
+              <p className="text-xs text-muted-foreground">
+                {t.loggedInAs.replace("{email}", sessionEmail)}
+              </p>
+              <p className="text-xs font-medium text-muted-foreground">{t.notNewAccount}</p>
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={handleLogout}>
+                <LogOut className="size-3" aria-hidden />
+                {t.notYouLogout}
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -79,6 +110,7 @@ export default function OnboardingPage() {
               {loading ? t.submitting : t.submit}
             </Button>
           </form>
+          <p className="mt-4 text-xs text-muted-foreground">{t.modulesNote}</p>
         </CardContent>
       </Card>
     </div>

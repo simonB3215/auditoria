@@ -30,10 +30,21 @@ export const AUDIT_ACTIONS = {
   AUTH_LOGIN_FAILED: "AUTH_LOGIN_FAILED",
   AUTH_TOKEN_REJECTED: "AUTH_TOKEN_REJECTED",
   AUTH_PASSWORD_RESET_BY_ADMIN: "AUTH_PASSWORD_RESET_BY_ADMIN",
+  SANDBOX_CREATED: "SANDBOX_CREATED",
+  SANDBOX_DELETED: "SANDBOX_DELETED",
 } as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
 
-export type AuditResourceType = "evidence" | "finding" | "report" | "user" | "organization" | "scan" | "asset" | "auth";
+export type AuditResourceType =
+  | "evidence"
+  | "finding"
+  | "report"
+  | "user"
+  | "organization"
+  | "scan"
+  | "asset"
+  | "auth"
+  | "audit";
 
 interface LogAuditEventParams {
   organizationId: string | null;

@@ -11,6 +11,14 @@ export interface ReportFinding {
   remediation: string | null;
 }
 
+export interface ReportIgnoredFinding {
+  title: string;
+  severity: FindingSeverity;
+  status: "false_positive" | "accepted_risk";
+  reviewedByName: string | null;
+  justificationNotes: string | null;
+}
+
 export interface ReportEvidenceIssue {
   file_name: string;
   requirement_code: string | null;
@@ -39,6 +47,7 @@ export interface BuildReportInput {
   riskScore: RiskScoreResult;
   coverage: CoverageResult;
   findings: ReportFinding[];
+  ignoredFindings: ReportIgnoredFinding[];
   invalidEvidences: ReportEvidenceIssue[];
   anci?: ReportAnciSection;
 }
@@ -125,6 +134,27 @@ export async function buildAuditReportPdf(input: BuildReportInput): Promise<Buff
       doc.moveDown(0.5);
     }
   }
+
+  // --- Falsos Positivos y Excepciones Aplicadas (a.md, "MODULO DE
+  // SIMULACIÓN (SANDBOX) Y GENERACIÓN DE INFORME TÉCNICO COMPLETO") ---
+  // Bitácora de qué se descartó, quién y por qué — separado del desglose
+  // de arriba (que ya solo trae hallazgos activos) para no mezclar riesgo
+  // real con decisiones ya revisadas por un auditor.
+  doc.fontSize(16).text("Falsos Positivos y Excepciones Aplicadas", { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(12);
+  if (input.ignoredFindings.length === 0) {
+    doc.text("No se descartó ningún hallazgo como falso positivo ni se aceptó ningún riesgo en esta auditoría.");
+  } else {
+    for (const finding of input.ignoredFindings) {
+      const statusLabel = finding.status === "false_positive" ? "Falso positivo" : "Riesgo aceptado";
+      doc.moveDown(0.3);
+      doc.fontSize(11).text(`• [${statusLabel}] (${SEVERITY_LABEL[finding.severity]}) ${finding.title}`);
+      doc.text(`  Descartado por: ${finding.reviewedByName ?? "Usuario eliminado / Sistema"}`);
+      doc.text(`  Justificación: ${finding.justificationNotes ?? "—"}`);
+    }
+  }
+  doc.moveDown();
 
   // --- Informe de Posición de Riesgo - Ley 21.663 (ANCI) ---
   if (input.anci) {
