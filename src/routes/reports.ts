@@ -19,7 +19,10 @@ import {
 import type { FindingSeverity } from "../services/findingsNormalization.js";
 import { logAuditEvent, requestContext, AUDIT_ACTIONS } from "../services/auditLogger.js";
 
-const SIGNED_URL_TTL_SECONDS = 5 * 60;
+// a.md, "MVP: REGLAS DE NEGOCIO...": las URLs firmadas de descarga
+// expiran a la hora — antes eran 5 minutos, muy corto para que alguien
+// reciba el link por otro canal (ej. reenviado por email/chat) y lo abra.
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 export const reportsRouter = Router();
 

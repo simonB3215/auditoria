@@ -124,6 +124,7 @@ URLs de Supabase.
 | `npm run build` / `npm start` | Build de producción + arranque |
 | `npm run typecheck` | Solo chequeo de tipos |
 | `npm run worker:scan` | Worker que consume la cola de escaneos |
+| `npm run worker:domain-verify` | Worker que reintenta automáticamente la verificación DNS de dominios (hasta 5 intentos en 24h) |
 | `npm run worker:retention` | Worker que purga evidencias vencidas (corre diario vía BullMQ Job Scheduler; también se puede disparar manual con `POST /admin/retention/run-now`) |
 | `npm run worker:economic-indicators` | Worker que refresca UF/UTM/Dólar desde Mindicador.cl (corre diario a las 08:00 America/Santiago vía BullMQ Job Scheduler; el endpoint del panel también refresca al vuelo si el caché tiene más de 1h) |
 | `npm run db:migrate` | Aplica `schema.sql` + migraciones pendientes |
@@ -765,6 +766,70 @@ una.
   en la UI: botón en el hero, redirect al audit, polling de estado hasta
   "Completado", hallazgos reales visibles en `/audits/[id]/report`,
   cumplimiento ANCI calculado a partir de ellos (43%/33%).
+
+### Reglas de negocio del MVP (a.md, "MVP: REGLAS DE NEGOCIO, AUTENTICACIÓN Y MEJORAS DE UX/UI")
+Este prompt asumía una arquitectura distinta a la real en dos puntos —
+**Firebase Auth** (la app usa Supabase Auth, con RLS de Postgres
+dependiendo de `auth.uid()` de Supabase en cada tabla) y un modelo
+**single-tenant / sin invitaciones** (ya existe un sistema completo de
+roles — ciso/auditor/auditor_guest/viewer — y gestión de usuarios en
+`/admin`). Migrar a Firebase o volver single-tenant habría significado
+reescribir autenticación, middleware y todas las políticas RLS desde
+cero — se confirmó con el usuario no tocar esos dos puntos antes de
+implementar el resto. Tampoco se aplicó "Dark Mode exclusivo": contradice
+la paleta azul/slate para **ambos** modos que se implementó a pedido
+explícito unos commits atrás.
+- **Límite de 5 activos por organización** (`MAX_ASSETS_PER_ORGANIZATION`
+  en `src/routes/assets.ts`): `POST /assets` cuenta los activos
+  existentes antes de insertar y responde `403 ASSET_LIMIT_REACHED` al
+  llegar al tope — 5 en vez del piso de "3 a 5" que sugería a.md, para no
+  ser tan restrictivo que una auditoría real con un puñado de
+  dominios/IPs no entre. El frontend muestra un contador "X/5 activos"
+  junto al título de `/assets`, calculado del lado del cliente (no pega
+  un request aparte).
+- **Banner de riesgo crítico en el dashboard**: si
+  `summary.findingsBySeverity.critical > 0`, se muestra un `Alert`
+  destructivo arriba de todo — reusa un campo que el summary ya traía
+  para `SeverityDistribution`, no hizo falta agregar nada al backend.
+- **Notificación por email al completar un escaneo**
+  (`src/services/emailTemplates.ts` + `scanWorker.ts`): un solo correo
+  cuando el audit termina `completed` (nunca en `failed`), con una
+  sección destacada si hubo hallazgos críticos — cubre las dos
+  condiciones de a.md ("escaneo completado" + "hallazgo crítico") sin
+  mandar dos correos separados por el mismo evento. Mismo patrón
+  "preparado pero no conectado" que el resto de los emails del sistema
+  (sin `RESEND_API_KEY`, se registra en consola). Falla en silencio
+  (try/catch best-effort): un error de notificación no debe tirar abajo
+  un job de escaneo que sí terminó bien.
+- **Modal híbrido de falsos positivos** (`/audits/[id]/report`): un
+  selector "Motivo" (Riesgo Aceptado / Control Compensatorio Existente /
+  Entorno de Pruebas / Otro) que precarga el campo de justificación con
+  una frase inicial editable — el texto libre que ya existía no
+  desapareció, el preset solo lo arranca; la validación de mínimo 10
+  caracteres del backend sigue intacta.
+- **URLs de PDF a 1 hora**: `SIGNED_URL_TTL_SECONDS` pasó de 5 minutos a
+  3600s en `reports.ts` — antes era demasiado corto para que alguien
+  reciba el link por otro canal (reenviado por email/chat) y lo abra.
+- **Reintentos automáticos de verificación DNS** (`src/jobs/domainVerifyQueue.ts`
+  + `domainVerifyWorker.ts`, proceso nuevo — `npm run worker:domain-verify`,
+  mismo patrón que `scanQueue`/`scanWorker`): al crear un activo `domain`,
+  `POST /assets` agenda automáticamente hasta 5 chequeos de TXT
+  espaciados (5min/30min/2h/6h/24h desde la creación, la última marca
+  cae justo a las 24h que pedía a.md) sin que el usuario tenga que volver
+  a tocar nada — el botón manual "Verificar ahora" sigue disponible para
+  quien no quiere esperar. Cada intento relee el estado del activo antes
+  de chequear DNS: si ya está `verified` (por el botón manual o un
+  intento automático anterior), no hace nada y no reprograma más. No se
+  agregó ningún estado "expirado" nuevo al enum de `verification_status`
+  — agotados los 5 intentos, el activo simplemente queda `pending`
+  (idéntico a como ya se comporta hoy), verificable a mano en cualquier
+  momento.
+- Verificado con smoke tests contra el backend, Redis/BullMQ y Supabase
+  reales (límite de activos, TTL de PDF, dato del banner crítico,
+  reprogramación automática del reintento DNS, no-op sobre un activo ya
+  verificado, email de notificación disparado tras un escaneo real de la
+  simulación) y con Playwright en la UI (banner crítico, contador "3/5",
+  precarga de texto en el modal híbrido).
 
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Worker, type Job } from "bullmq";
 import { redisConnectionForWorker } from "../config/redis.js";
 import { supabaseAdmin } from "../config/supabase.js";
+import { env } from "../config/env.js";
 import { SCAN_QUEUE_NAME, type ScanJobData } from "./scanQueue.js";
 import { runNmapScan, checkTlsCertificate, checkSecurityHeaders, isHttpsPort, isHttpLikePort } from "./scanEngine.js";
 import {
@@ -11,6 +12,7 @@ import {
   type NormalizedFinding,
 } from "../services/findingsNormalization.js";
 import { logAuditEvent, AUDIT_ACTIONS } from "../services/auditLogger.js";
+import { sendScanCompletedEmail } from "../services/emailTemplates.js";
 
 const NETWORK_SCANNABLE_TYPES = new Set(["ip", "domain", "cidr"]);
 
@@ -130,6 +132,35 @@ async function processScanJob(job: Job<ScanJobData>): Promise<void> {
   console.log(
     `[scan-worker] audit=${auditId} finalizado: ${allFindings.length} hallazgo(s), ${failures.length} activo(s) con error, ${skipped.length} omitido(s)`
   );
+
+  // Notificación por email (a.md, "MVP: REGLAS DE NEGOCIO..."): un solo
+  // correo cuando el audit termina `completed` — nunca en `failed`, ahí no
+  // hay nada que reportar todavía. Mismo patrón "preparado pero no
+  // conectado" que el resto de los emails (ver emailTemplates.ts): sin
+  // RESEND_API_KEY, se registra en consola en vez de fallar el job entero
+  // por un error de notificación best-effort.
+  if (!allFailed) {
+    try {
+      const [{ data: audit }, { data: actorProfile }, { data: actorUser }] = await Promise.all([
+        supabaseAdmin.from("audits").select("title").eq("id", auditId).maybeSingle(),
+        supabaseAdmin.from("profiles").select("full_name").eq("id", actorId).maybeSingle(),
+        supabaseAdmin.auth.admin.getUserById(actorId),
+      ]);
+      const recipientEmail = actorUser?.user?.email;
+      if (audit && recipientEmail) {
+        const criticalCount = allFindings.filter((f) => f.severity === "critical").length;
+        await sendScanCompletedEmail(recipientEmail, {
+          recipientName: actorProfile?.full_name ?? recipientEmail,
+          auditTitle: audit.title,
+          findingsCount: allFindings.length,
+          criticalCount,
+          auditUrl: `${env.CORS_ORIGIN}/audits/${auditId}`,
+        });
+      }
+    } catch (err) {
+      console.error(`[scan-worker] audit=${auditId} no se pudo enviar el email de notificación:`, err);
+    }
+  }
 }
 
 export const scanWorker = new Worker<ScanJobData>(SCAN_QUEUE_NAME, processScanJob, {

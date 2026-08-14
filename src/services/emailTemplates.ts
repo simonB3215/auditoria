@@ -184,3 +184,66 @@ export async function sendDomainDelegationEmail(to: string, params: DomainDelega
   console.log(`[email] Envío pendiente de implementar. Para: ${to} | Asunto: ${template.subject}`);
   return template;
 }
+
+/**
+ * Notificación de escaneo completado (a.md, "MVP: REGLAS DE NEGOCIO,
+ * AUTENTICACIÓN Y MEJORAS DE UX/UI" — "enviar un correo únicamente
+ * cuando: 1. el escaneo pase a Completado, 2. se detecte al menos un
+ * hallazgo Crítico"). Un solo correo cubre ambas condiciones: se envía
+ * siempre que un audit termina `completed` (nunca en `failed`, no hay
+ * nada que reportar todavía) y el contenido cambia según haya o no
+ * hallazgos críticos — evita mandar dos correos separados por el mismo
+ * evento cuando ambas condiciones se cumplen a la vez.
+ */
+export interface ScanCompletedEmailParams {
+  recipientName: string;
+  auditTitle: string;
+  findingsCount: number;
+  criticalCount: number;
+  auditUrl: string;
+}
+
+export function buildScanCompletedEmail(params: ScanCompletedEmailParams): EmailTemplate {
+  const hasCritical = params.criticalCount > 0;
+  const subject = hasCritical
+    ? `⚠️ ${params.criticalCount} hallazgo(s) crítico(s) en "${params.auditTitle}"`
+    : `Escaneo completado: "${params.auditTitle}"`;
+
+  const criticalLineText = hasCritical
+    ? `Se detectaron ${params.criticalCount} hallazgo(s) de severidad CRÍTICA — te recomendamos revisarlos cuanto antes.\n\n`
+    : "";
+  const criticalLineHtml = hasCritical
+    ? `<p style="color:#b91c1c"><strong>⚠️ Se detectaron ${params.criticalCount} hallazgo(s) de severidad CRÍTICA</strong> — te recomendamos revisarlos cuanto antes.</p>`
+    : "";
+
+  const text =
+    `Hola ${params.recipientName},\n\n` +
+    `El escaneo técnico de la auditoría "${params.auditTitle}" terminó con ${params.findingsCount} hallazgo(s) detectado(s).\n\n` +
+    criticalLineText +
+    `Ver el reporte completo: ${params.auditUrl}\n\n` +
+    `— El equipo de Aegis CyberAudit`;
+  const html =
+    `<p>Hola ${params.recipientName},</p>` +
+    `<p>El escaneo técnico de la auditoría <strong>"${params.auditTitle}"</strong> terminó con <strong>${params.findingsCount}</strong> hallazgo(s) detectado(s).</p>` +
+    criticalLineHtml +
+    `<p><a href="${params.auditUrl}">Ver el reporte completo</a></p>` +
+    `<p>— El equipo de Aegis CyberAudit</p>`;
+  return { subject, html, text };
+}
+
+/**
+ * Mismo patrón "preparado pero no conectado" que el resto de los emails
+ * del sistema — ver `sendGuestEmail`/`sendDomainDelegationEmail`.
+ */
+export async function sendScanCompletedEmail(to: string, params: ScanCompletedEmailParams): Promise<EmailTemplate> {
+  const template = buildScanCompletedEmail(params);
+
+  if (!process.env.RESEND_API_KEY) {
+    console.log(`[email:not-configured] Para: ${to} | Asunto: ${template.subject}`);
+    return template;
+  }
+
+  // TODO: integrar Resend (o el SMTP que se elija) acá.
+  console.log(`[email] Envío pendiente de implementar. Para: ${to} | Asunto: ${template.subject}`);
+  return template;
+}

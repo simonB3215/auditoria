@@ -389,7 +389,15 @@ export default function AssetsPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{t.title}</h1>
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-xl font-semibold">{t.title}</h1>
+          {/* Límite del MVP (a.md, "MVP: REGLAS DE NEGOCIO..."): 5 activos
+              máximo por organización — el backend ya rechaza el POST al
+              llegar al límite, esto solo lo deja visible de antemano. */}
+          <span className="text-sm text-muted-foreground">
+            {t.assetLimitCounter.replace("{count}", String(assets.length)).replace("{max}", "5")}
+          </span>
+        </div>
 
         <Dialog
           open={dialogOpen}

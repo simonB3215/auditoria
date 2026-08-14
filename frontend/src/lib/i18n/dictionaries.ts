@@ -104,6 +104,8 @@ export const dictionaries = {
       statAnciEmpty: "Sin auditoría ANCI todavía",
       statAnciHint: "Servicios Esenciales (SE) de la auditoría ANCI más reciente.",
       statIgnoredFindings: "Falsos Positivos / Excepciones",
+      criticalBanner:
+        "⚠️ Tenés {count} hallazgo(s) crítico(s) activo(s) sin resolver. Revisalos cuanto antes en el reporte de la auditoría correspondiente.",
       newAuditModulesNote:
         "Después de crear la auditoría vas a poder ejecutar el escaneo técnico de perímetro (automático, sin archivos) y, opcionalmente, subir evidencia documental.",
       healthScoreTitle: "Puntaje de Salud de Seguridad",
@@ -218,6 +220,14 @@ export const dictionaries = {
       detailsClose: "Cerrar",
       consequenceWarning:
         "Atención: al ignorar esta alerta, el riesgo queda excluido de los reportes oficiales y del cálculo de cumplimiento. Incluí una justificación breve para la bitácora de auditoría.",
+      reasonLabel: "Motivo",
+      reasonAcceptedRisk: "Riesgo Aceptado",
+      reasonAcceptedRiskTemplate: "Riesgo aceptado por la organización: ",
+      reasonCompensatingControl: "Control Compensatorio Existente",
+      reasonCompensatingControlTemplate: "Existe un control compensatorio que mitiga este riesgo: ",
+      reasonTestEnvironment: "Entorno de Pruebas",
+      reasonTestEnvironmentTemplate: "Corresponde a un entorno de pruebas, no a producción: ",
+      reasonOther: "Otro (especificar)",
       justificationTitle: "Justificación técnica",
       justificationDesc: "Explica por qué este hallazgo cambia de estado. Queda registrado en el historial de la auditoría.",
       justificationLabel: "Justificación",
@@ -280,6 +290,7 @@ export const dictionaries = {
     },
     assets: {
       title: "Activos",
+      assetLimitCounter: "{count}/{max} activos",
       addAsset: "Agregar activo",
       editAsset: "Editar activo",
       colType: "Tipo",
@@ -837,6 +848,8 @@ export const dictionaries = {
       statAnciEmpty: "No ANCI audit yet",
       statAnciHint: "Essential Services (SE) score of the most recent ANCI audit.",
       statIgnoredFindings: "False Positives / Exceptions",
+      criticalBanner:
+        "⚠️ You have {count} unresolved critical finding(s). Review them as soon as possible in the relevant audit's report.",
       newAuditModulesNote:
         "After creating the audit you'll be able to run the perimeter technical scan (automatic, no files) and, optionally, upload documentary evidence.",
       healthScoreTitle: "Security Health Score",
@@ -951,6 +964,14 @@ export const dictionaries = {
       detailsClose: "Close",
       consequenceWarning:
         "Warning: ignoring this alert excludes the risk from official reports and the compliance score. Include a brief justification for the audit trail.",
+      reasonLabel: "Reason",
+      reasonAcceptedRisk: "Accepted Risk",
+      reasonAcceptedRiskTemplate: "Risk accepted by the organization: ",
+      reasonCompensatingControl: "Existing Compensating Control",
+      reasonCompensatingControlTemplate: "There's a compensating control mitigating this risk: ",
+      reasonTestEnvironment: "Test Environment",
+      reasonTestEnvironmentTemplate: "This corresponds to a test environment, not production: ",
+      reasonOther: "Other (specify)",
       justificationTitle: "Technical justification",
       justificationDesc: "Explain why this finding is changing status. This is recorded in the audit's history.",
       justificationLabel: "Justification",
@@ -1013,6 +1034,7 @@ export const dictionaries = {
     },
     assets: {
       title: "Assets",
+      assetLimitCounter: "{count}/{max} assets",
       addAsset: "Add asset",
       editAsset: "Edit asset",
       colType: "Type",

@@ -3,7 +3,19 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FlaskConical, FolderKanban, Gauge, Globe, Loader2, Plus, Rocket, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
+import {
+  AlertOctagon,
+  FlaskConical,
+  FolderKanban,
+  Gauge,
+  Globe,
+  Loader2,
+  Plus,
+  Rocket,
+  ShieldCheck,
+  ShieldOff,
+  Trash2,
+} from "lucide-react";
 import { api, ensureSession, getApiErrorMessage } from "@/lib/api";
 import type { DashboardSummary } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -405,6 +417,15 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {summary.findingsBySeverity.critical > 0 && (
+        <Alert variant="destructive">
+          <AlertOctagon className="size-4" aria-hidden />
+          <AlertDescription>
+            {t.criticalBanner.replace("{count}", String(summary.findingsBySeverity.critical))}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <HealthScoreCard score={summary.securityHealthScore} t={t} />
 
       <SandboxControls

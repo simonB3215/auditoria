@@ -16,6 +16,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -53,6 +54,18 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
     { value: "ignored", label: t.tabIgnoredAlerts },
   ];
 
+  // Modal híbrido de falsos positivos (a.md, "MVP: REGLAS DE NEGOCIO..."):
+  // motivos predefinidos que precargan la justificación, más el texto
+  // libre que ya existía — se puede editar/completar el texto precargado,
+  // nunca reemplaza la validación de mínimo 10 caracteres que ya exigía
+  // el endpoint.
+  const REASON_PRESETS: { value: string; label: string; template: string }[] = [
+    { value: "accepted_risk", label: t.reasonAcceptedRisk, template: t.reasonAcceptedRiskTemplate },
+    { value: "compensating_control", label: t.reasonCompensatingControl, template: t.reasonCompensatingControlTemplate },
+    { value: "test_environment", label: t.reasonTestEnvironment, template: t.reasonTestEnvironmentTemplate },
+    { value: "other", label: t.reasonOther, template: "" },
+  ];
+
   const [findings, setFindings] = useState<Finding[]>([]);
   const [missingRequirements, setMissingRequirements] = useState<Array<{ code: string; title: string }>>([]);
   const [anci, setAnci] = useState<AnciStatus | null>(null);
@@ -68,6 +81,7 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
 
   const [pendingChange, setPendingChange] = useState<PendingStatusChange | null>(null);
   const [justification, setJustification] = useState("");
+  const [reasonPreset, setReasonPreset] = useState("other");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [expiredNotice, setExpiredNotice] = useState(false);
@@ -120,7 +134,14 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
   function openStatusDialog(findingId: string, status: FindingStatus) {
     setPendingChange({ findingId, status });
     setJustification("");
+    setReasonPreset("other");
     setSubmitError(null);
+  }
+
+  function handleReasonPresetChange(value: string) {
+    setReasonPreset(value);
+    const preset = REASON_PRESETS.find((r) => r.value === value);
+    if (preset?.template) setJustification(preset.template);
   }
 
   async function confirmStatusChange() {
@@ -391,9 +412,28 @@ export default function AuditReportPage({ params }: { params: Promise<{ id: stri
           <p className="text-sm text-muted-foreground">{t.justificationDesc}</p>
           <div className="flex flex-col gap-3">
             {(pendingChange?.status === "false_positive" || pendingChange?.status === "accepted_risk") && (
-              <Alert variant="destructive">
-                <AlertDescription>{t.consequenceWarning}</AlertDescription>
-              </Alert>
+              <>
+                <Alert variant="destructive">
+                  <AlertDescription>{t.consequenceWarning}</AlertDescription>
+                </Alert>
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="reason-preset" className="text-sm font-medium">
+                    {t.reasonLabel}
+                  </label>
+                  <Select value={reasonPreset} onValueChange={handleReasonPresetChange}>
+                    <SelectTrigger id="reason-preset" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REASON_PRESETS.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             )}
             <div className="flex flex-col gap-2">
               <label htmlFor="justification" className="text-sm font-medium">

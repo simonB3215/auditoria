@@ -11,8 +11,17 @@ import { validateUuidParams } from "../middlewares/validateParams.js";
 import { env } from "../config/env.js";
 import { AUDIT_ACTIONS, logAuditEvent, requestContext } from "../services/auditLogger.js";
 import { sendDomainDelegationEmail } from "../services/emailTemplates.js";
+import { domainVerifyQueue, DOMAIN_VERIFY_RETRY_DELAYS_MS } from "../jobs/domainVerifyQueue.js";
 
 export const assetsRouter = Router();
+
+/**
+ * Límite de activos por organización (a.md, "MVP: REGLAS DE NEGOCIO,
+ * AUTENTICACIÓN Y MEJORAS DE UX/UI" — "3 a 5 activos"). 5 en vez de 3
+ * para no ser tan restrictivo que una auditoría real con un puñado de
+ * dominios/IPs no entre en el límite del MVP.
+ */
+const MAX_ASSETS_PER_ORGANIZATION = 5;
 
 assetsRouter.post(
   "/assets",
@@ -22,6 +31,18 @@ assetsRouter.post(
     const body = assetInputSchema.parse(req.body);
     const profile = req.profile!;
     const supabase = supabaseForUser(profile.accessToken);
+
+    const { count: existingCount, error: countError } = await supabase
+      .from("assets")
+      .select("id", { count: "exact", head: true });
+    if (countError) throw new AppError(400, "ASSETS_COUNT_FAILED", countError.message);
+    if ((existingCount ?? 0) >= MAX_ASSETS_PER_ORGANIZATION) {
+      throw new AppError(
+        403,
+        "ASSET_LIMIT_REACHED",
+        `Tu organización alcanzó el máximo de ${MAX_ASSETS_PER_ORGANIZATION} activos del plan MVP. Eliminá alguno existente antes de registrar uno nuevo.`
+      );
+    }
 
     const { data, error } = await supabase
       .from("assets")
@@ -53,6 +74,21 @@ assetsRouter.post(
         throw new AppError(409, "ASSET_ALREADY_EXISTS", "Este activo ya está registrado en tu organización");
       }
       throw new AppError(400, "ASSET_CREATE_FAILED", error.message);
+    }
+
+    // Reintentos automáticos de verificación DNS (a.md, "MVP: REGLAS DE
+    // NEGOCIO..."): arrancan solos al crear el dominio, sin que el usuario
+    // tenga que volver a tocar nada — el botón "Verificar ahora" sigue
+    // sirviendo para no esperar. Best-effort: si Redis no responde, no
+    // aborta la creación del activo por eso.
+    if (data.type === "domain") {
+      await domainVerifyQueue
+        .add(
+          "retry-verify",
+          { assetId: data.id, organizationId: profile.organizationId, attempt: 1 },
+          { delay: DOMAIN_VERIFY_RETRY_DELAYS_MS[0] }
+        )
+        .catch((err) => console.error(`[assets] no se pudo agendar la verificación automática de ${data.id}:`, err));
     }
 
     res.status(201).json({ data });
