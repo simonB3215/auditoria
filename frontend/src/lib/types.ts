@@ -7,6 +7,8 @@ export interface Profile {
   isPlatformAdmin: boolean;
   /** Solo no-null para auditor_guest (Piloto Invitado) o un ex-guest ya degradado a viewer. */
   expiresAt: string | null;
+  /** Límite de activos por organización (`MAX_ASSETS_PER_ORG` del backend) — nunca hardcodear este número en el frontend. */
+  maxAssetsPerOrg: number;
 }
 
 export type AuditStatus = "draft" | "queued" | "running" | "completed" | "failed";

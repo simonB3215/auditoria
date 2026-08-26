@@ -75,10 +75,18 @@ scansRouter.post(
     if (body.asset_ids && body.asset_ids.length > 0) {
       // Security gate explícito (a.md, sección "Security Gate"): si el
       // cliente pide activos puntuales por id, hay que distinguir "no
-      // verificado" de "no existe / no es tuyo" — este segundo caso ya lo
-      // cubre RLS (el activo ajeno ni siquiera aparece). Si aparece pero no
-      // está verificado, no se lo descarta en silencio: se aborta TODA la
-      // solicitud con 403 y se audita el intento, tal como pide a.md.
+      // verificado" de "no existe / no es tuyo". El cliente scoped-a-RLS
+      // ya hace que un activo de otra organización simplemente no vuelva
+      // en `requested` — pero eso por sí solo NO basta como control de
+      // seguridad auditable: sin este chequeo, ese id "desaparecido" se
+      // descartaría en silencio (o, si eran todos los ids pedidos,
+      // devolvería un 422 genérico de "no hay activos verificados", sin
+      // dejar rastro de que alguien intentó apuntar a un activo ajeno).
+      // Fase 2.3 (a.md, auditoría pre-venta): cualquier id pedido que no
+      // vuelva de esta consulta (no existe, o pertenece a otra org — RLS
+      // no distingue entre ambos casos a propósito, para no filtrar esa
+      // información) se trata igual que un activo no verificado: se
+      // aborta TODA la solicitud con 403 y se audita el intento.
       const { data: requested, error: requestedError } = await supabase
         .from("assets")
         .select("id, type, value, verification_status")
@@ -86,8 +94,10 @@ scansRouter.post(
       if (requestedError) {
         throw new AppError(400, "ASSETS_FETCH_FAILED", requestedError.message);
       }
+      const returnedIds = new Set((requested ?? []).map((a) => a.id));
+      const notOwnedIds = body.asset_ids.filter((id) => !returnedIds.has(id));
       const unverified = (requested ?? []).filter((a) => a.verification_status !== "verified");
-      if (unverified.length > 0) {
+      if (unverified.length > 0 || notOwnedIds.length > 0) {
         await logAuditEvent({
           organizationId: audit.organization_id,
           actorId: profile.id,
@@ -96,9 +106,17 @@ scansRouter.post(
           resourceId: auditId,
           payloadAfter: {
             unverifiedAssets: unverified.map((a) => ({ id: a.id, type: a.type, value: a.value })),
+            notOwnedOrMissingAssetIds: notOwnedIds,
           },
           ...requestContext(req),
         });
+        if (notOwnedIds.length > 0) {
+          throw new AppError(
+            403,
+            "UNAUTHORIZED_SCAN_TARGET",
+            `No se puede ejecutar el escaneo: ${notOwnedIds.length} activo(s) seleccionado(s) no existe(n) o no pertenece(n) a tu organización.`
+          );
+        }
         throw new AppError(
           403,
           "UNAUTHORIZED_SCAN_TARGET",

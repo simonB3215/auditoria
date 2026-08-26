@@ -831,6 +831,120 @@ explícito unos commits atrás.
   simulación) y con Playwright en la UI (banner crítico, contador "3/5",
   precarga de texto en el modal híbrido).
 
+### Auditoría de seguridad y consistencia pre-venta (a.md, "BUILD PROMPT: AUDITORÍA DE SEGURIDAD Y CONSISTENCIA PRE-VENTA")
+Auditoría en dos fases: primero reportar sin tocar nada, después aplicar
+solo los arreglos acotados que pedía el propio a.md.
+
+**Hallazgos (Fase 1)**: cero fuga de secretos en el árbol actual ni en
+**todo** el historial de git (búsqueda tipo *pickaxe* por JWT, `sb_secret_`,
+`RESEND_API_KEY=`, cadenas Redis con credenciales — los pocos matches
+fueron falsos positivos verificados a mano: un hash de integridad de
+`package-lock.json` y placeholders `change-me` en un `.env.example`
+viejo). Sesión confirmada en cookies (`@supabase/ssr`, sin `storage:`
+override). Cero analítica/tracking instalado, ahora ni antes. Sin
+lenguaje que exagere el alcance (nada de "pentesting"/"auditoría
+integral"/certificación de cumplimiento); el hash SHA-256 del PDF ya
+está correctamente descrito como solo-integridad, nunca como firma
+electrónica avanzada.
+
+**Cambios (Fase 2)**:
+- `src/config/env.ts` + `src/routes/assets.ts`: `MAX_ASSETS_PER_ORG`
+  configurable por variable de entorno (`z.coerce.number().int().positive().default(5)`),
+  default sin cambios.
+- `src/routes/scans.ts`: hueco real encontrado y cerrado. Al pedir
+  `asset_ids` puntuales, un id que RLS no devuelve (no existe, o es de
+  otra organización) se descartaba en silencio en vez de rechazarse
+  explícitamente — si eran todos los ids pedidos, el endpoint devolvía
+  un `422` genérico sin auditar el intento. Ahora cualquier id no
+  devuelto por la consulta scoped-a-RLS se trata igual que uno no
+  verificado: `403 UNAUTHORIZED_SCAN_TARGET` + `audit_logs`
+  (`UNAUTHORIZED_SCAN_BLOCKED`), sin distinguir "no existe" de "no es
+  tuyo" a propósito (para no filtrar esa información). Confirmado que
+  `scanQueue.add` solo tiene dos puntos de entrada en todo `src/`
+  (`scans.ts` y `sandbox.ts`), ambos gateados.
+
+No se pudo correr la suite de tests en esta fase (`.env.test` tenía un
+`EVIDENCE_ENCRYPTION_KEY` inválido, preexistente) — verificado en cambio
+con `tsc --noEmit` limpio y el backend real con hot-reload sin errores.
+Ver la fase siguiente para el cierre de este pendiente.
+
+### Pendientes post-auditoría (a.md, "BUILD PROMPT: PENDIENTES POST-AUDITORÍA")
+Cierre de los pendientes que quedaron de la auditoría anterior, en el
+orden de prioridad que pedía a.md.
+
+**Prioridad 1 — Suite de tests**:
+- `.env.test` tenía literalmente el placeholder sin completar
+  (`EVIDENCE_ENCRYPTION_KEY=generar-con-node-crypto-randomBytes-32-hex`)
+  en vez de una clave real de 32 bytes — reemplazado por una clave dummy
+  generada de verdad, exclusiva para tests.
+- Con eso arreglado, la suite pasó de "0 tests, 4 suites sin poder
+  cargar" a corriendo de verdad. Diagnóstico pedido por a.md, distinguiendo
+  causa: **auth.test.ts, evidences.test.ts y multitenant.test.ts pasan
+  completos** (la key tapaba esto). **scanAndReport.test.ts: TC-11/12
+  (y la nueva TC-13) pasan; TC-10 falla con `ECONNREFUSED
+  127.0.0.1:6379`** — esto **no** es consecuencia de la key ni un bug de
+  lógica: no hay una instancia de Redis local corriendo en este entorno
+  (`.env.test` apunta a `localhost:6379` a propósito, para nunca tocar
+  el Upstash real de producción desde los tests — ver el comentario
+  original en el `.env.test.example` histórico). Docker está instalado
+  pero el daemon no está corriendo; no lo arranqué ni instalé Redis por
+  mi cuenta al ser una decisión de entorno fuera del alcance acotado —
+  **queda pendiente del lado del usuario si quiere levantarlo**.
+- `tests/scanAndReport.test.ts`: agregado **TC-13** (no existía
+  cobertura del fix de la Fase 2.3). Segunda organización + activo real
+  ajeno para el caso "no es tuyo", más un UUID random para "no existe";
+  confirma `403` idéntico (mismo código y mensaje) en ambos casos —
+  sin filtrar la distinción — y verifica los dos registros en
+  `audit_logs` con el id correspondiente en el payload. No depende de
+  Redis (el rechazo ocurre antes de encolar nada), así que corre limpio
+  incluso con TC-10 fallando por la causa de arriba.
+
+**Prioridad 2 — Templates de entorno**: `.env.example` y
+`.env.test.example` recreados desde cero en la raíz, usando el schema
+de Zod de `env.ts` como única fuente — incluye también `DATABASE_URL`
+(usada por `db/run-migrations.ts`) y `RESEND_API_KEY` (leída
+directamente vía `process.env`, no por el schema; opcional, sin ella el
+envío de emails queda en modo "preparado pero no conectado") aunque
+ninguna de las dos vive en el schema de Zod, para que el template sea
+realmente completo. Verificado con un smoke test real: copia de
+`.env.example` con valores dummy con el formato correcto (URL válida,
+64 hex chars, etc.) → `env.ts` parsea sin errores. `.gitignore` ya
+ignoraba `.env`/`.env.test` puntual (no un glob `.env*`), así que los
+nuevos `*.example` nunca estuvieron en riesgo de quedar ignorados —
+confirmado con `git check-ignore`, no hizo falta tocar `.gitignore`.
+
+**Secundario A — Límite de activos sincronizado**: `src/routes/users.ts`
+(`GET /users/me`) ahora devuelve `maxAssetsPerOrg: env.MAX_ASSETS_PER_ORG`
+— se eligió ese endpoint por ser el "perfil de org" que el frontend ya
+pide en casi todas las páginas autenticadas (`useProfile()`, 11 usos
+existentes). `frontend/src/lib/types.ts` (`Profile.maxAssetsPerOrg`) y
+`assets/page.tsx` (contador "X/5 activos") actualizados para leer el
+número de ahí en vez de tenerlo hardcodeado; el contador ahora no se
+muestra hasta que el perfil cargó, en vez de mostrar un valor
+potencialmente incorrecto mientras tanto.
+
+**Secundario B — Gitleaks en CI**: no existía ningún pipeline de CI en
+el repo — `.github/workflows/gitleaks.yml` es nuevo, corre en cada
+push/PR usando la Action oficial `gitleaks/gitleaks-action@v2`.
+`.gitleaks.toml` (nuevo, raíz del repo) extiende el ruleset por defecto
+y agrega el allowlist que pedía a.md (`package-lock.json`, los tres
+`.env*.example`). Validado el TOML con un parser real; no se pudo
+correr `gitleaks` localmente (no está instalado, y no se instaló
+software nuevo sin preguntar) — queda verificado recién en el primer
+push/PR real a GitHub. Nota aparte: la Action de gitleaks tiene
+condiciones de licencia distintas para repos de cuentas de organización
+privadas vs. cuentas personales — no confirmado cuál aplica acá.
+
+⚠️ **Nota de manejo de secretos de esta fase**: al diagnosticar el
+`ECONNREFUSED` de TC-10 se comparó `REDIS_URL` de `.env` contra
+`.env.test`, y el valor completo de `.env` (una URL de Upstash real,
+con el password incluido) quedó impreso en la salida de una terminal
+durante el diagnóstico. `.env` nunca se commiteó ni se tocó — el
+archivo en sí sigue igual de seguro que antes — pero ese valor quedó
+visible en el historial de esa sesión de trabajo. Mencionado
+explícitamente para que el usuario evalúe si rotar esa credencial de
+Upstash por precaución.
+
 ### Seguridad
 - Evidencias cifradas (AES-256-GCM) antes de subir a Storage.
 - Buckets privados; los reportes se sirven vía signed URL temporal.

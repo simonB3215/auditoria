@@ -13,6 +13,10 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1),
   EVIDENCE_BUCKET: z.string().default("evidences"),
   REPORTS_BUCKET: z.string().default("reports"),
+  // Límite duro de activos por organización (plan MVP). Configurable sin
+  // tocar la lógica de negocio; el valor por defecto no cambió (Fase de
+  // auditoría pre-venta, a.md sección 2.2).
+  MAX_ASSETS_PER_ORG: z.coerce.number().int().positive().default(5),
   // Clave AES-256 (32 bytes) en hex, para cifrar evidencias antes de subirlas a Storage.
   EVIDENCE_ENCRYPTION_KEY: z
     .string()

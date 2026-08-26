@@ -19,9 +19,11 @@ export const assetsRouter = Router();
  * Límite de activos por organización (a.md, "MVP: REGLAS DE NEGOCIO,
  * AUTENTICACIÓN Y MEJORAS DE UX/UI" — "3 a 5 activos"). 5 en vez de 3
  * para no ser tan restrictivo que una auditoría real con un puñado de
- * dominios/IPs no entre en el límite del MVP.
+ * dominios/IPs no entre en el límite del MVP. Configurable vía
+ * `MAX_ASSETS_PER_ORG` (ver `src/config/env.ts`; valor por defecto sin
+ * cambios — Fase de auditoría pre-venta, a.md sección 2.2).
  */
-const MAX_ASSETS_PER_ORGANIZATION = 5;
+const MAX_ASSETS_PER_ORGANIZATION = env.MAX_ASSETS_PER_ORG;
 
 assetsRouter.post(
   "/assets",

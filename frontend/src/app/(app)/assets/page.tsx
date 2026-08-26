@@ -5,6 +5,7 @@ import { Check, Copy, Globe, HelpCircle, Loader2, Mail, Plus, ShieldCheck, Trash
 import { api, getApiErrorMessage } from "@/lib/api";
 import type { Asset, AssetCriticality, AssetType } from "@/lib/types";
 import { useI18n } from "@/lib/i18n/context";
+import { useProfile } from "@/hooks/useProfile";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -145,6 +146,10 @@ function FieldLabel({
 export default function AssetsPage() {
   const { dict } = useI18n();
   const t = dict.assets;
+  // Límite de activos: viene de /users/me (env.MAX_ASSETS_PER_ORG en el
+  // backend), nunca hardcodeado acá — ver a.md, auditoría post-venta,
+  // Secundario A. Mientras el perfil no cargó, no se asume ningún valor.
+  const { profile } = useProfile();
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -391,12 +396,17 @@ export default function AssetsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <h1 className="text-xl font-semibold">{t.title}</h1>
-          {/* Límite del MVP (a.md, "MVP: REGLAS DE NEGOCIO..."): 5 activos
-              máximo por organización — el backend ya rechaza el POST al
-              llegar al límite, esto solo lo deja visible de antemano. */}
-          <span className="text-sm text-muted-foreground">
-            {t.assetLimitCounter.replace("{count}", String(assets.length)).replace("{max}", "5")}
-          </span>
+          {/* Límite del MVP (a.md, "MVP: REGLAS DE NEGOCIO..."): el backend
+              ya rechaza el POST al llegar al límite, esto solo lo deja
+              visible de antemano. El número sale de /users/me
+              (maxAssetsPerOrg), no hardcodeado — ver Secundario A. */}
+          {profile && (
+            <span className="text-sm text-muted-foreground">
+              {t.assetLimitCounter
+                .replace("{count}", String(assets.length))
+                .replace("{max}", String(profile.maxAssetsPerOrg))}
+            </span>
+          )}
         </div>
 
         <Dialog
